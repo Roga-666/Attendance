@@ -21,7 +21,7 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.3.0.apk` to your Android phone.
+1. Copy `Attendance-v1.3.1.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 

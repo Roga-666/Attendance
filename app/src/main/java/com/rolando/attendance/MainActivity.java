@@ -225,14 +225,14 @@ public final class MainActivity extends Activity {
 
     private void showTardy() {
         activeAttendanceHistoryType = null;
-        LinearLayout body = page("Tardy", "Record a tardy or call-out for today—or choose an earlier date.");
+        LinearLayout body = page("Tardy & Call-Outs", "Record a tardy or call-out for today—or choose an earlier date.");
         body.addView(sectionTitle("DATE"));
         Button date = dateButton(selectedTardyDate);
         date.setOnClickListener(v -> pickDate(selectedTardyDate, picked -> { selectedTardyDate = picked; showTardy(); }));
         LinearLayout dateRow = horizontal();
         dateRow.addView(date, new LinearLayout.LayoutParams(0, dp(58), 1));
         dateRow.addView(gap(dp(10)));
-        Button today = outlineButton("↻ Today");
+        Button today = outlineButton("Today");
         today.setContentDescription("Reset date to today");
         today.setEnabled(!selectedTardyDate.equals(LocalDate.now()));
         today.setAlpha(today.isEnabled() ? 1f : .45f);
@@ -256,9 +256,9 @@ public final class MainActivity extends Activity {
             if (e.type.equals(AttendanceDb.TARDY)) { tardies++; lateTotal += e.lateMinutes; } else calls++;
         }
         LinearLayout stats = horizontal();
-        stats.addView(attendanceStatCard(String.valueOf(tardies), "Tardies", AttendanceDb.TARDY), new LinearLayout.LayoutParams(0, dp(106), 1));
-        stats.addView(gap(dp(10)));
         stats.addView(attendanceStatCard(String.valueOf(calls), "Call-Outs", AttendanceDb.CALLED_OUT), new LinearLayout.LayoutParams(0, dp(106), 1));
+        stats.addView(gap(dp(10)));
+        stats.addView(attendanceStatCard(String.valueOf(tardies), "Tardies", AttendanceDb.TARDY), new LinearLayout.LayoutParams(0, dp(106), 1));
         body.addView(stats, lpMatchWrap(dp(10)));
         if (prefs.getBoolean("track_late_minutes", false) && lateTotal > 0) body.addView(infoCard(PdfExporter.duration(lateTotal) + " total late in this filter"), lpMatchWrap(dp(14)));
 
@@ -421,7 +421,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.3.0", 12, MUTED, false);
+        TextView version = label("Attendance 1.3.1", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
