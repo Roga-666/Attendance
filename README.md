@@ -7,16 +7,19 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 - **Tardy & call-out tracking** for today or any earlier date
 - Optional **exact late duration** (hours and minutes)
 - **Hours worked** tracking with one editable entry per date
-- **Last 30 days, current month, current year, and all-time** filters
+- **Last 30 days, chosen month, chosen year, and all-time** filters
 - A cumulative hours total and separate tardy/call-out counts
 - Editable history with deletion confirmation
 - Native **PDF export and Android share sheet** for the active mode and filter
+- Light and dark themes plus a choice of default opening mode
+- Full JSON backup/import for moving records between devices
+- Optional Google Drive sync through a user-selected Drive backup file
 - Edge swipe or menu button to open the left-side navigation
-- Fully local SQLite storage—no account, ads, analytics, internet permission, or cloud sync
+- Private SQLite storage with no ads, analytics, or direct internet permission
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.0.0.apk` to your Android phone.
+1. Copy `Attendance-v1.1.0.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 
@@ -34,4 +37,4 @@ Requirements: JDK 17 and Android SDK 35. The project uses only Android platform 
 
 ## Data and exports
 
-App records are stored in the app's private local database. Removing the app also removes those records. PDF files are created in the app cache only when Export is tapped, then shared only to the destination selected in Android's share sheet.
+App records are stored in the app's private local database. Removing the app also removes those records unless you exported a backup or linked a Google Drive backup first. Drive sync uses Android's system file picker, so Attendance never receives your Google password or broad access to your Drive. PDF files are created in the app cache only when Export is tapped, then shared only to the destination selected in Android's share sheet.

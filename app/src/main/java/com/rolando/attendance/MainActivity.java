@@ -3,6 +3,7 @@ package com.rolando.attendance;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -18,10 +19,12 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.NumberPicker;
 import android.widget.ScrollView;
 import android.widget.Space;
 import android.widget.Switch;
@@ -30,6 +33,7 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
@@ -38,11 +42,13 @@ public final class MainActivity extends Activity {
     private static final int NAVY = Color.rgb(16, 28, 44);
     private static final int TEAL = Color.rgb(0, 175, 155);
     private static final int CORAL = Color.rgb(255, 90, 82);
-    private static final int PAPER = Color.rgb(245, 247, 250);
-    private static final int INK = Color.rgb(35, 45, 58);
-    private static final int MUTED = Color.rgb(102, 116, 132);
     private static final DateTimeFormatter FULL_DATE = DateTimeFormatter.ofPattern("EEEE, MMMM d, uuuu", Locale.US);
     private static final DateTimeFormatter SHORT_DATE = DateTimeFormatter.ofPattern("EEE, MMM d, uuuu", Locale.US);
+    private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("MMM uuuu", Locale.US);
+    private static final int EXPORT_BACKUP = 401;
+    private static final int IMPORT_BACKUP = 402;
+    private static final int DRIVE_CREATE = 403;
+    private static final int DRIVE_OPEN = 404;
 
     private enum Mode { TARDY, HOURS, SETTINGS }
     private enum Filter {
@@ -53,6 +59,8 @@ public final class MainActivity extends Activity {
 
     private AttendanceDb db;
     private SharedPreferences prefs;
+    private boolean darkMode;
+    private int PAPER, INK, MUTED, CARD_COLOR, BORDER;
     private FrameLayout root;
     private LinearLayout content;
     private LinearLayout drawer;
@@ -61,19 +69,35 @@ public final class MainActivity extends Activity {
     private float touchDownX, touchDownY;
     private Mode mode = Mode.TARDY;
     private Filter tardyFilter = Filter.DAYS_30;
-    private Filter hoursFilter = Filter.ALL;
+    private Filter hoursFilter = Filter.DAYS_30;
+    private YearMonth selectedTardyMonth = YearMonth.now();
+    private YearMonth selectedHoursMonth = YearMonth.now();
+    private int selectedTardyYear = LocalDate.now().getYear();
+    private int selectedHoursYear = LocalDate.now().getYear();
     private LocalDate selectedTardyDate = LocalDate.now();
     private LocalDate selectedHoursDate = LocalDate.now();
 
     @Override protected void onCreate(Bundle state) {
+        prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        darkMode = prefs.getBoolean("dark_mode", false);
+        setTheme(darkMode ? R.style.AppThemeDark : R.style.AppTheme);
         super.onCreate(state);
+        PAPER = darkMode ? Color.rgb(16, 21, 29) : Color.rgb(245, 247, 250);
+        INK = darkMode ? Color.rgb(235, 240, 246) : Color.rgb(35, 45, 58);
+        MUTED = darkMode ? Color.rgb(166, 179, 193) : Color.rgb(102, 116, 132);
+        CARD_COLOR = darkMode ? Color.rgb(28, 37, 50) : Color.WHITE;
+        BORDER = darkMode ? Color.rgb(58, 70, 85) : Color.rgb(213, 221, 230);
         Window window = getWindow();
         window.setStatusBarColor(NAVY);
         window.setNavigationBarColor(NAVY);
         db = new AttendanceDb(this);
-        prefs = getSharedPreferences("settings", MODE_PRIVATE);
         buildShell();
-        showTardy();
+        if ("HOURS".equals(prefs.getString("default_mode", "TARDY"))) {
+            mode = Mode.HOURS; showHours();
+        } else {
+            mode = Mode.TARDY; showTardy();
+        }
+        if (prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri")) syncDrive(false);
     }
 
     private void buildShell() {
@@ -115,7 +139,7 @@ public final class MainActivity extends Activity {
         drawer.addView(navButton("⚙   Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
         Space space = new Space(this);
         drawer.addView(space, new LinearLayout.LayoutParams(1, 0, 1));
-        TextView privacy = label("Stored only on this device", 12, Color.rgb(154, 180, 185), false);
+        TextView privacy = label("Private by default • Drive sync optional", 12, Color.rgb(154, 180, 185), false);
         drawer.addView(privacy);
     }
 
@@ -173,47 +197,9 @@ public final class MainActivity extends Activity {
             body.addView(saved, lpMatchWrap(dp(14)));
         }
 
-        boolean trackLate = prefs.getBoolean("track_late_minutes", false);
-        EditText lateHours = numberField("Hours", 2);
-        EditText lateMinutes = numberField("Minutes", 2);
-        if (trackLate) {
-            body.addView(sectionTitle("HOW LATE?  (OPTIONAL)"));
-            LinearLayout duration = horizontal();
-            duration.addView(lateHours, new LinearLayout.LayoutParams(0, dp(58), 1));
-            duration.addView(gap(dp(10)));
-            duration.addView(lateMinutes, new LinearLayout.LayoutParams(0, dp(58), 1));
-            if (existing != null && existing.type.equals(AttendanceDb.TARDY)) {
-                lateHours.setText(String.valueOf(existing.lateMinutes / 60));
-                lateMinutes.setText(String.valueOf(existing.lateMinutes % 60));
-            }
-            body.addView(duration, lpMatchWrap(dp(18)));
-        }
-
-        body.addView(sectionTitle("MARK THIS DATE"));
-        LinearLayout actions = horizontal();
-        Button tardy = button("Mark tardy", CORAL, Color.WHITE);
-        tardy.setOnClickListener(v -> {
-            int mins = trackLate ? readDuration(lateHours, lateMinutes) : 0;
-            if (mins < 0) return;
-            db.saveAttendance(selectedTardyDate, AttendanceDb.TARDY, mins);
-            toast("Tardy saved for " + SHORT_DATE.format(selectedTardyDate));
-            showTardy();
-        });
-        Button call = button("Called out", NAVY, Color.WHITE);
-        call.setOnClickListener(v -> {
-            confirm("Mark called out?", "Save a call-out for " + SHORT_DATE.format(selectedTardyDate) + "?", () -> {
-                db.saveAttendance(selectedTardyDate, AttendanceDb.CALLED_OUT, 0);
-                toast("Call-out saved"); showTardy();
-            });
-        });
-        actions.addView(tardy, new LinearLayout.LayoutParams(0, dp(56), 1));
-        actions.addView(gap(dp(10)));
-        actions.addView(call, new LinearLayout.LayoutParams(0, dp(56), 1));
-        body.addView(actions, lpMatchWrap(dp(24)));
-
         body.addView(sectionTitle("SUMMARY"));
-        body.addView(filterBar(tardyFilter, f -> { tardyFilter = f; showTardy(); }), lpMatchWrap(dp(14)));
-        LocalDate[] range = range(tardyFilter, "attendance");
+        body.addView(filterBar(tardyFilter, true, f -> { tardyFilter = f; showTardy(); }), lpMatchWrap(dp(14)));
+        LocalDate[] range = range(tardyFilter, AttendanceDb.TABLE_ATTENDANCE, true);
         List<AttendanceDb.AttendanceEntry> entries = db.attendanceBetween(range[0], range[1]);
         int tardies = 0, calls = 0, lateTotal = 0;
         for (AttendanceDb.AttendanceEntry e : entries) {
@@ -224,8 +210,47 @@ public final class MainActivity extends Activity {
         stats.addView(gap(dp(10)));
         stats.addView(statCard(String.valueOf(calls), "Call-outs", NAVY), new LinearLayout.LayoutParams(0, dp(106), 1));
         body.addView(stats, lpMatchWrap(dp(10)));
-        if (trackLate && lateTotal > 0) body.addView(infoCard(PdfExporter.duration(lateTotal) + " total late in this filter"), lpMatchWrap(dp(14)));
+        if (prefs.getBoolean("track_late_minutes", false) && lateTotal > 0) body.addView(infoCard(PdfExporter.duration(lateTotal) + " total late in this filter"), lpMatchWrap(dp(14)));
 
+        body.addView(sectionTitle("MARK THIS DATE"));
+        boolean trackLate = prefs.getBoolean("track_late_minutes", false);
+        EditText lateHours = numberField("Hours", 2);
+        EditText lateMinutes = numberField("Minutes", 2);
+        if (trackLate) {
+            body.addView(label("How late? (optional)", 13, MUTED, true), lpMatchWrap(dp(8)));
+            LinearLayout duration = horizontal();
+            duration.addView(lateHours, new LinearLayout.LayoutParams(0, dp(58), 1));
+            duration.addView(gap(dp(10)));
+            duration.addView(lateMinutes, new LinearLayout.LayoutParams(0, dp(58), 1));
+            if (existing != null && existing.type.equals(AttendanceDb.TARDY)) {
+                lateHours.setText(String.valueOf(existing.lateMinutes / 60));
+                lateMinutes.setText(String.valueOf(existing.lateMinutes % 60));
+            }
+            body.addView(duration, lpMatchWrap(dp(10)));
+        }
+
+        LinearLayout actions = horizontal();
+        Button call = button("Called Out", NAVY, Color.WHITE);
+        call.setOnClickListener(v -> {
+            confirm("Mark called out?", "Save a call-out for " + SHORT_DATE.format(selectedTardyDate) + "?", () -> {
+                db.saveAttendance(selectedTardyDate, AttendanceDb.CALLED_OUT, 0);
+                syncDriveAfterChange();
+                toast("Call-out saved"); showTardy();
+            });
+        });
+        Button tardy = button("Tardy", CORAL, Color.WHITE);
+        tardy.setOnClickListener(v -> {
+            int mins = trackLate ? readDuration(lateHours, lateMinutes) : 0;
+            if (mins < 0) return;
+            db.saveAttendance(selectedTardyDate, AttendanceDb.TARDY, mins);
+            syncDriveAfterChange();
+            toast("Tardy saved for " + SHORT_DATE.format(selectedTardyDate));
+            showTardy();
+        });
+        actions.addView(call, new LinearLayout.LayoutParams(0, dp(56), 1));
+        actions.addView(gap(dp(10)));
+        actions.addView(tardy, new LinearLayout.LayoutParams(0, dp(56), 1));
+        body.addView(actions, lpMatchWrap(dp(12)));
         addAttendanceHistory(body, entries);
         Button export = outlineButton("Export this view as PDF");
         export.setOnClickListener(v -> exportAttendance(range, entries));
@@ -258,17 +283,18 @@ public final class MainActivity extends Activity {
             if (total <= 0) { if (total == 0) toast("Enter the time you worked"); return; }
             if (total > 24 * 60) { toast("Hours for one date cannot exceed 24"); return; }
             db.saveHours(selectedHoursDate, total);
+            syncDriveAfterChange();
             toast("Hours saved for " + SHORT_DATE.format(selectedHoursDate)); showHours();
         });
         body.addView(save, lpMatch(dp(56), dp(24)));
 
         body.addView(sectionTitle("TOTAL"));
-        body.addView(filterBar(hoursFilter, f -> { hoursFilter = f; showHours(); }), lpMatchWrap(dp(14)));
-        LocalDate[] range = range(hoursFilter, "hours");
+        body.addView(filterBar(hoursFilter, false, f -> { hoursFilter = f; showHours(); }), lpMatchWrap(dp(14)));
+        LocalDate[] range = range(hoursFilter, AttendanceDb.TABLE_HOURS, false);
         List<AttendanceDb.HoursEntry> entries = db.hoursBetween(range[0], range[1]);
         int total = 0;
         for (AttendanceDb.HoursEntry e : entries) total += e.minutes;
-        body.addView(statCard(PdfExporter.duration(total), hoursFilter.label, TEAL), lpMatch(dp(112), dp(18)));
+        body.addView(statCard(PdfExporter.duration(total), filterLabel(hoursFilter, false), TEAL), lpMatch(dp(112), dp(18)));
         addHoursHistory(body, entries);
         Button export = outlineButton("Export this view as PDF");
         export.setOnClickListener(v -> exportHours(range, entries));
@@ -276,23 +302,61 @@ public final class MainActivity extends Activity {
     }
 
     private void showSettings() {
-        LinearLayout body = page("Settings", "Choose how much detail you want to track.");
-        LinearLayout card = card();
-        LinearLayout line = horizontal();
-        LinearLayout copy = new LinearLayout(this);
-        copy.setOrientation(LinearLayout.VERTICAL);
-        copy.addView(label("Track exact late time", 16, INK, true));
-        copy.addView(label("Show hours and minutes when marking a tardy.", 13, MUTED, false));
-        Switch toggle = new Switch(this);
-        toggle.setChecked(prefs.getBoolean("track_late_minutes", false));
-        toggle.setOnCheckedChangeListener((v, checked) -> prefs.edit().putBoolean("track_late_minutes", checked).apply());
-        line.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        line.addView(toggle, new LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.WRAP_CONTENT));
-        card.addView(line);
-        body.addView(card, lpMatchWrap(dp(18)));
+        LinearLayout body = page("Settings", "Personalize Attendance and protect your records.");
+
+        body.addView(sectionTitle("APPEARANCE"));
+        body.addView(toggleCard("Dark mode", "Use a dark color scheme throughout the app.", darkMode, (v, checked) -> {
+            prefs.edit().putBoolean("dark_mode", checked).apply(); recreate();
+        }), lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("DEFAULT OPENING SCREEN"));
+        LinearLayout startCard = card();
+        startCard.addView(label("Choose where Attendance opens", 16, INK, true), lpMatchWrap(dp(10)));
+        LinearLayout startButtons = horizontal();
+        boolean startsHours = "HOURS".equals(prefs.getString("default_mode", "TARDY"));
+        Button startTardy = choiceButton("Tardy", !startsHours);
+        Button startHours = choiceButton("Hours", startsHours);
+        startTardy.setOnClickListener(v -> { prefs.edit().putString("default_mode", "TARDY").apply(); showSettings(); });
+        startHours.setOnClickListener(v -> { prefs.edit().putString("default_mode", "HOURS").apply(); showSettings(); });
+        startButtons.addView(startTardy, new LinearLayout.LayoutParams(0, dp(48), 1));
+        startButtons.addView(gap(dp(10)));
+        startButtons.addView(startHours, new LinearLayout.LayoutParams(0, dp(48), 1));
+        startCard.addView(startButtons);
+        body.addView(startCard, lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("TARDY DETAILS"));
+        body.addView(toggleCard("Track exact late time", "Show hours and minutes when marking a tardy.", prefs.getBoolean("track_late_minutes", false), (v, checked) -> prefs.edit().putBoolean("track_late_minutes", checked).apply()), lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("BACKUP & TRANSFER"));
+        LinearLayout backupCard = card();
+        backupCard.addView(label("Move all data between devices", 16, INK, true));
+        backupCard.addView(label("Export one backup file containing tardies, call-outs, hours, and deletions. Importing merges the newest records.", 13, MUTED, false), lpMatchWrap(dp(12)));
+        LinearLayout backupButtons = horizontal();
+        Button export = outlineButton("Export data");
+        export.setOnClickListener(v -> startBackupExport());
+        Button importData = outlineButton("Import data");
+        importData.setOnClickListener(v -> confirm("Import attendance data?", "The newest records from the selected backup will be merged with this device.", this::startBackupImport));
+        backupButtons.addView(export, new LinearLayout.LayoutParams(0, dp(50), 1));
+        backupButtons.addView(gap(dp(10)));
+        backupButtons.addView(importData, new LinearLayout.LayoutParams(0, dp(50), 1));
+        backupCard.addView(backupButtons);
+        body.addView(backupCard, lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("GOOGLE DRIVE"));
+        boolean driveEnabled = prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri");
+        body.addView(toggleCard("Google Drive sync", "Link a backup file in Google Drive. Attendance merges it on startup and updates it after changes.", driveEnabled, (v, checked) -> {
+            if (checked) chooseDriveSetup();
+            else { prefs.edit().putBoolean("drive_sync", false).remove("drive_uri").apply(); toast("Google Drive sync disconnected"); showSettings(); }
+        }), lpMatchWrap(dp(10)));
+        if (driveEnabled) {
+            Button sync = button("Sync now", TEAL, Color.WHITE);
+            sync.setOnClickListener(v -> syncDrive(true));
+            body.addView(sync, lpMatch(dp(52), dp(18)));
+        }
+
         body.addView(sectionTitle("ABOUT YOUR DATA"));
-        body.addView(infoCard("Attendance stores everything locally on this phone. PDF sharing only happens when you tap Export and choose where to send it."));
-        TextView version = label("Attendance 1.0.0", 12, MUTED, false);
+        body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
+        TextView version = label("Attendance 1.1.0", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
@@ -301,7 +365,7 @@ public final class MainActivity extends Activity {
         if (entries.isEmpty()) { body.addView(emptyCard("No tardies or call-outs in this range."), lpMatchWrap(dp(18))); return; }
         for (AttendanceDb.AttendanceEntry e : entries) {
             String detail = e.type + (e.type.equals(AttendanceDb.TARDY) && e.lateMinutes > 0 ? " • " + PdfExporter.duration(e.lateMinutes) + " late" : "");
-            body.addView(historyRow(SHORT_DATE.format(e.date), detail, () -> { selectedTardyDate = e.date; showTardy(); }, () -> confirmDelete(() -> { db.deleteAttendance(e.id); showTardy(); })), lpMatchWrap(dp(8)));
+            body.addView(historyRow(SHORT_DATE.format(e.date), detail, () -> { selectedTardyDate = e.date; showTardy(); }, () -> confirmDelete(() -> { db.deleteAttendance(e.id); syncDriveAfterChange(); showTardy(); })), lpMatchWrap(dp(8)));
         }
     }
 
@@ -309,8 +373,144 @@ public final class MainActivity extends Activity {
         body.addView(sectionTitle("HISTORY"));
         if (entries.isEmpty()) { body.addView(emptyCard("No hours saved in this range."), lpMatchWrap(dp(18))); return; }
         for (AttendanceDb.HoursEntry e : entries) {
-            body.addView(historyRow(SHORT_DATE.format(e.date), PdfExporter.duration(e.minutes), () -> { selectedHoursDate = e.date; showHours(); }, () -> confirmDelete(() -> { db.deleteHours(e.id); showHours(); })), lpMatchWrap(dp(8)));
+            body.addView(historyRow(SHORT_DATE.format(e.date), PdfExporter.duration(e.minutes), () -> { selectedHoursDate = e.date; showHours(); }, () -> confirmDelete(() -> { db.deleteHours(e.id); syncDriveAfterChange(); showHours(); })), lpMatchWrap(dp(8)));
         }
+    }
+
+    private LinearLayout toggleCard(String title, String subtitle, boolean checked, CompoundButton.OnCheckedChangeListener listener) {
+        LinearLayout row = card();
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.addView(label(title, 16, INK, true));
+        copy.addView(label(subtitle, 13, MUTED, false));
+        row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        Switch toggle = new Switch(this);
+        toggle.setChecked(checked);
+        toggle.setContentDescription(title);
+        toggle.setOnCheckedChangeListener(listener);
+        row.addView(toggle, new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private Button choiceButton(String text, boolean selected) {
+        Button button = button(text, selected ? TEAL : CARD_COLOR, selected ? Color.WHITE : INK);
+        button.setBackground(selected ? roundRect(TEAL, 14) : bordered(CARD_COLOR, BORDER, 14));
+        return button;
+    }
+
+    private void startBackupExport() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "Attendance-backup-" + LocalDate.now() + ".json");
+        startActivityForResult(intent, EXPORT_BACKUP);
+    }
+
+    private void startBackupImport() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        startActivityForResult(intent, IMPORT_BACKUP);
+    }
+
+    private void chooseDriveSetup() {
+        new AlertDialog.Builder(this)
+                .setTitle("Set up Google Drive sync")
+                .setMessage("In the next file picker, choose Google Drive. You can create a new Attendance backup or link an existing one.")
+                .setItems(new String[]{"Create new Drive backup", "Link existing Drive backup"}, (dialog, which) -> {
+                    Intent intent = new Intent(which == 0 ? Intent.ACTION_CREATE_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("application/json");
+                    if (which == 0) intent.putExtra(Intent.EXTRA_TITLE, "Attendance-Drive-Backup.json");
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    startActivityForResult(intent, which == 0 ? DRIVE_CREATE : DRIVE_OPEN);
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> showSettings())
+                .show();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            if (requestCode == DRIVE_CREATE || requestCode == DRIVE_OPEN) showSettings();
+            return;
+        }
+        Uri uri = data.getData();
+        if (requestCode == EXPORT_BACKUP) {
+            writeBackup(uri, "Backup exported");
+        } else if (requestCode == IMPORT_BACKUP) {
+            importBackup(uri);
+        } else if (requestCode == DRIVE_CREATE || requestCode == DRIVE_OPEN) {
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            } catch (SecurityException ignored) { }
+            prefs.edit().putString("drive_uri", uri.toString()).putBoolean("drive_sync", true).apply();
+            if (requestCode == DRIVE_CREATE) writeBackup(uri, "Google Drive sync connected");
+            else syncDrive(true);
+            showSettings();
+        }
+    }
+
+    private void writeBackup(Uri uri, String successMessage) {
+        new Thread(() -> {
+            try {
+                BackupManager.write(getContentResolver(), uri, BackupManager.createJson(db));
+                runOnUiThread(() -> toast(successMessage));
+            } catch (Exception e) {
+                runOnUiThread(() -> toast("Could not write the backup file"));
+            }
+        }).start();
+    }
+
+    private void importBackup(Uri uri) {
+        new Thread(() -> {
+            try {
+                int merged = BackupManager.mergeJson(db, BackupManager.read(getContentResolver(), uri));
+                runOnUiThread(() -> {
+                    toast("Backup imported • " + merged + " records checked");
+                    refreshCurrentMode();
+                    syncDriveAfterChange();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> toast("That file is not a valid Attendance backup"));
+            }
+        }).start();
+    }
+
+    private void syncDriveAfterChange() {
+        if (prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri")) syncDrive(false);
+    }
+
+    private void syncDrive(boolean showFeedback) {
+        String savedUri = prefs.getString("drive_uri", null);
+        if (savedUri == null) {
+            if (showFeedback) toast("Connect a Google Drive backup first");
+            return;
+        }
+        Uri uri = Uri.parse(savedUri);
+        new Thread(() -> {
+            try {
+                String cloud = BackupManager.read(getContentResolver(), uri);
+                if (!cloud.trim().isEmpty()) BackupManager.mergeJson(db, cloud);
+                BackupManager.write(getContentResolver(), uri, BackupManager.createJson(db));
+                runOnUiThread(() -> {
+                    if (showFeedback) toast("Google Drive sync complete");
+                    refreshCurrentMode();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (showFeedback) toast("Could not sync the Google Drive backup");
+                });
+            }
+        }).start();
+    }
+
+    private void refreshCurrentMode() {
+        if (mode == Mode.TARDY) showTardy();
+        else if (mode == Mode.HOURS) showHours();
+        else showSettings();
     }
 
     private View historyRow(String title, String detail, Runnable edit, Runnable delete) {
@@ -331,14 +531,19 @@ public final class MainActivity extends Activity {
         return row;
     }
 
-    private HorizontalScrollView filterBar(Filter selected, FilterAction action) {
+    private HorizontalScrollView filterBar(Filter selected, boolean tardyMode, FilterAction action) {
         HorizontalScrollView scroll = new HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout row = horizontal();
         for (Filter f : Filter.values()) {
-            Button b = button(f.label, f == selected ? NAVY : Color.WHITE, f == selected ? Color.WHITE : INK);
-            b.setBackground(f == selected ? roundRect(NAVY, 20) : bordered(Color.WHITE, Color.rgb(215, 221, 228), 20));
-            b.setOnClickListener(v -> action.select(f));
+            String text = f == Filter.MONTH ? (f == selected ? filterLabel(f, tardyMode) : "Month") + " ▾" : f == Filter.YEAR ? (f == selected ? filterLabel(f, tardyMode) : "Year") + " ▾" : f.label;
+            Button b = button(text, f == selected ? NAVY : CARD_COLOR, f == selected ? Color.WHITE : INK);
+            b.setBackground(f == selected ? roundRect(NAVY, 20) : bordered(CARD_COLOR, BORDER, 20));
+            b.setOnClickListener(v -> {
+                if (f == Filter.MONTH) showMonthPicker(tardyMode, action);
+                else if (f == Filter.YEAR) showYearPicker(tardyMode, action);
+                else action.select(f);
+            });
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42));
             p.setMarginEnd(dp(8)); row.addView(b, p);
         }
@@ -346,23 +551,64 @@ public final class MainActivity extends Activity {
         return scroll;
     }
 
-    private LocalDate[] range(Filter filter, String table) {
+    private LocalDate[] range(Filter filter, String table, boolean tardyMode) {
         LocalDate today = LocalDate.now();
         switch (filter) {
             case DAYS_30: return new LocalDate[]{today.minusDays(29), today};
-            case MONTH: return new LocalDate[]{today.withDayOfMonth(1), today};
-            case YEAR: return new LocalDate[]{today.withDayOfYear(1), today};
+            case MONTH:
+                YearMonth month = tardyMode ? selectedTardyMonth : selectedHoursMonth;
+                LocalDate monthEnd = month.equals(YearMonth.now()) ? today : month.atEndOfMonth();
+                return new LocalDate[]{month.atDay(1), monthEnd};
+            case YEAR:
+                int year = tardyMode ? selectedTardyYear : selectedHoursYear;
+                return new LocalDate[]{LocalDate.of(year, 1, 1), year == today.getYear() ? today : LocalDate.of(year, 12, 31)};
             default: return new LocalDate[]{db.earliestDate(table), today};
         }
     }
 
+    private String filterLabel(Filter filter, boolean tardyMode) {
+        if (filter == Filter.MONTH) return MONTH_LABEL.format(tardyMode ? selectedTardyMonth : selectedHoursMonth);
+        if (filter == Filter.YEAR) return String.valueOf(tardyMode ? selectedTardyYear : selectedHoursYear);
+        return filter.label;
+    }
+
+    private void showMonthPicker(boolean tardyMode, FilterAction action) {
+        YearMonth selected = tardyMode ? selectedTardyMonth : selectedHoursMonth;
+        LinearLayout pickers = horizontal();
+        pickers.setPadding(dp(16), dp(4), dp(16), 0);
+        NumberPicker month = new NumberPicker(this);
+        month.setMinValue(1); month.setMaxValue(12); month.setValue(selected.getMonthValue());
+        month.setDisplayedValues(new String[]{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"});
+        NumberPicker year = new NumberPicker(this);
+        year.setMinValue(2000); year.setMaxValue(LocalDate.now().getYear()); year.setValue(selected.getYear());
+        pickers.addView(month, new LinearLayout.LayoutParams(0, dp(180), 1));
+        pickers.addView(year, new LinearLayout.LayoutParams(0, dp(180), 1));
+        new AlertDialog.Builder(this).setTitle("Choose month").setView(pickers).setNegativeButton("Cancel", null).setPositiveButton("Use month", (d, w) -> {
+            YearMonth choice = YearMonth.of(year.getValue(), month.getValue());
+            if (choice.isAfter(YearMonth.now())) { toast("Choose the current month or an earlier month"); return; }
+            if (tardyMode) selectedTardyMonth = choice; else selectedHoursMonth = choice;
+            action.select(Filter.MONTH);
+        }).show();
+    }
+
+    private void showYearPicker(boolean tardyMode, FilterAction action) {
+        NumberPicker year = new NumberPicker(this);
+        year.setMinValue(2000); year.setMaxValue(LocalDate.now().getYear());
+        year.setValue(tardyMode ? selectedTardyYear : selectedHoursYear);
+        year.setWrapSelectorWheel(false);
+        new AlertDialog.Builder(this).setTitle("Choose year").setView(year).setNegativeButton("Cancel", null).setPositiveButton("Use year", (d, w) -> {
+            if (tardyMode) selectedTardyYear = year.getValue(); else selectedHoursYear = year.getValue();
+            action.select(Filter.YEAR);
+        }).show();
+    }
+
     private void exportAttendance(LocalDate[] range, List<AttendanceDb.AttendanceEntry> entries) {
-        try { share(PdfExporter.attendance(this, tardyFilter.label, range[0], range[1], entries)); }
+        try { share(PdfExporter.attendance(this, filterLabel(tardyFilter, true), range[0], range[1], entries)); }
         catch (IOException e) { toast("Could not create the PDF"); }
     }
 
     private void exportHours(LocalDate[] range, List<AttendanceDb.HoursEntry> entries) {
-        try { share(PdfExporter.hours(this, hoursFilter.label, range[0], range[1], entries)); }
+        try { share(PdfExporter.hours(this, filterLabel(hoursFilter, false), range[0], range[1], entries)); }
         catch (IOException e) { toast("Could not create the PDF"); }
     }
 
@@ -381,10 +627,10 @@ public final class MainActivity extends Activity {
     }
 
     private Button dateButton(LocalDate date) {
-        Button b = button(FULL_DATE.format(date) + "   ▾", Color.WHITE, INK);
+        Button b = button(FULL_DATE.format(date) + "   ▾", CARD_COLOR, INK);
         b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         b.setPadding(dp(18), 0, dp(14), 0);
-        b.setBackground(bordered(Color.WHITE, Color.rgb(213, 221, 230), 14));
+        b.setBackground(bordered(CARD_COLOR, BORDER, 14));
         return b;
     }
 
@@ -399,8 +645,8 @@ public final class MainActivity extends Activity {
 
     private LinearLayout infoCard(String text) {
         LinearLayout card = card();
-        card.setBackground(bordered(Color.rgb(232, 247, 244), Color.rgb(182, 228, 220), 14));
-        card.addView(label(text, 13, Color.rgb(20, 105, 95), false));
+        card.setBackground(bordered(darkMode ? Color.rgb(20, 55, 57) : Color.rgb(232, 247, 244), darkMode ? Color.rgb(45, 105, 102) : Color.rgb(182, 228, 220), 14));
+        card.addView(label(text, 13, darkMode ? Color.rgb(166, 231, 222) : Color.rgb(20, 105, 95), false));
         return card;
     }
 
@@ -414,7 +660,7 @@ public final class MainActivity extends Activity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackground(roundRect(Color.WHITE, 14));
+        card.setBackground(roundRect(CARD_COLOR, 14));
         card.setElevation(dp(1));
         return card;
     }
@@ -444,8 +690,9 @@ public final class MainActivity extends Activity {
     }
 
     private Button outlineButton(String text) {
-        Button b = button(text, Color.TRANSPARENT, NAVY);
-        b.setBackground(bordered(Color.TRANSPARENT, NAVY, 14));
+        int accent = darkMode ? TEAL : NAVY;
+        Button b = button(text, Color.TRANSPARENT, accent);
+        b.setBackground(bordered(Color.TRANSPARENT, accent, 14));
         return b;
     }
 
@@ -454,7 +701,7 @@ public final class MainActivity extends Activity {
         e.setHint(hint); e.setTextSize(16); e.setTextColor(INK); e.setHintTextColor(MUTED);
         e.setSingleLine(true); e.setInputType(InputType.TYPE_CLASS_NUMBER);
         e.setPadding(dp(16), 0, dp(12), 0);
-        e.setBackground(bordered(Color.WHITE, Color.rgb(213, 221, 230), 14));
+        e.setBackground(bordered(CARD_COLOR, BORDER, 14));
         e.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(maxDigits)});
         return e;
     }
