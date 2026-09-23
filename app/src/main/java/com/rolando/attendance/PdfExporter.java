@@ -13,6 +13,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -34,11 +36,16 @@ public final class PdfExporter {
         return create(context, "Tardy & call-out report", filterName, from, to, summary, new String[]{"Date", "Status", "Late by"}, rows, "attendance");
     }
 
-    public static Uri hours(Context context, String filterName, LocalDate from, LocalDate to, List<AttendanceDb.HoursEntry> entries) throws IOException {
+    public static Uri hours(Context context, String filterName, LocalDate from, LocalDate to, List<AttendanceDb.HoursEntry> entries, boolean decimalHours) throws IOException {
         int total = 0;
         List<String[]> rows = new ArrayList<>();
-        for (AttendanceDb.HoursEntry e : entries) { total += e.minutes; rows.add(new String[]{DATE.format(e.date), duration(e.minutes)}); }
-        return create(context, "Hours worked report", filterName, from, to, duration(total) + " total", new String[]{"Date", "Hours worked"}, rows, "hours");
+        for (AttendanceDb.HoursEntry e : entries) { total += e.minutes; rows.add(new String[]{DATE.format(e.date), hours(e.minutes, decimalHours)}); }
+        return create(context, "Hours worked report", filterName, from, to, hours(total, decimalHours) + " total", new String[]{"Date", "Hours worked"}, rows, "hours");
+    }
+
+    private static String hours(int minutes, boolean decimal) {
+        if (!decimal) return String.format(Locale.US, "%d:%02d", minutes / 60, minutes % 60);
+        return BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP).toPlainString() + " hours";
     }
 
     private static Uri create(Context context, String title, String filter, LocalDate from, LocalDate to, String summary, String[] columns, List<String[]> rows, String prefix) throws IOException {

@@ -8,7 +8,9 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 - Optional **exact late duration** (hours and minutes)
 - **Hours worked** tracking with one editable entry per date
 - **Last 30 days, chosen month, chosen year, and all-time** filters
-- A cumulative hours total and separate tardy/call-out counts
+- Decimal or H:MM clock-form entry for worked hours
+- Current week, last week, current pay period, and last pay period hour totals
+- Configurable pay-period dates and separate tardy/call-out counts
 - Dedicated Tardy and Call-Out history tabs opened from the summary counters
 - Explicit Edit and Delete controls for correcting tardies and call-outs
 - Native **PDF export and Android share sheet** for the active mode and filter
@@ -21,7 +23,7 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.3.2.apk` to your Android phone.
+1. Copy `Attendance-v1.4.1.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 

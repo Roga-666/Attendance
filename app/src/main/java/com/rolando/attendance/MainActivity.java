@@ -36,7 +36,12 @@ import android.widget.Toast;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Locale;
 
@@ -58,6 +63,12 @@ public final class MainActivity extends Activity {
         final String label;
         Filter(String label) { this.label = label; }
     }
+    private enum HoursFilter {
+        CURRENT_WEEK("Current Week"), LAST_WEEK("Last Week"), CURRENT_PAY_PERIOD("Current Pay Period"), LAST_PAY_PERIOD("Last Pay Period");
+        final String label;
+        HoursFilter(String label) { this.label = label; }
+    }
+    private enum SettingsCategory { GENERAL, TIME, DATA }
 
     private AttendanceDb db;
     private SharedPreferences prefs;
@@ -71,14 +82,14 @@ public final class MainActivity extends Activity {
     private float touchDownX, touchDownY;
     private Mode mode = Mode.TARDY;
     private Filter tardyFilter = Filter.DAYS_30;
-    private Filter hoursFilter = Filter.DAYS_30;
+    private HoursFilter hoursFilter = HoursFilter.CURRENT_WEEK;
     private YearMonth selectedTardyMonth = YearMonth.now();
-    private YearMonth selectedHoursMonth = YearMonth.now();
     private int selectedTardyYear = LocalDate.now().getYear();
-    private int selectedHoursYear = LocalDate.now().getYear();
     private LocalDate selectedTardyDate = LocalDate.now();
     private LocalDate selectedHoursDate = LocalDate.now();
     private String activeAttendanceHistoryType;
+    private SettingsCategory settingsCategory = SettingsCategory.GENERAL;
+    private String settingsNotice;
 
     @Override protected void onCreate(Bundle state) {
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
@@ -146,9 +157,9 @@ public final class MainActivity extends Activity {
         drawer.addView(brand, lpMatchWrap(dp(26)));
         drawer.addView(navButton("!", "Tardy & Call-Outs", () -> { mode = Mode.TARDY; activeAttendanceHistoryType = null; closeDrawer(); showTardy(); }));
         drawer.addView(navButton("◷", "Hours", () -> { mode = Mode.HOURS; closeDrawer(); showHours(); }));
-        drawer.addView(navButton("⚙", "Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
         Space space = new Space(this);
         drawer.addView(space, new LinearLayout.LayoutParams(1, 0, 1));
+        drawer.addView(navButton("⚙", "Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
     }
 
     private LinearLayout navButton(String iconText, String text, Runnable action) {
@@ -315,20 +326,21 @@ public final class MainActivity extends Activity {
 
         AttendanceDb.HoursEntry existing = db.hoursFor(selectedHoursDate);
         body.addView(sectionTitle("HOURS WORKED"));
-        LinearLayout duration = horizontal();
-        EditText hours = numberField("Hours", 3);
-        EditText minutes = numberField("Minutes", 2);
-        if (existing != null) {
-            hours.setText(String.valueOf(existing.minutes / 60));
-            minutes.setText(String.valueOf(existing.minutes % 60));
+        boolean decimalHours = prefs.getBoolean("decimal_hours", true);
+        EditText decimal = decimalField("Decimal hours (example: 8.5)");
+        EditText clock = clockField("Clock hours (example: 8:30)");
+        if (decimalHours) {
+            if (existing != null) decimal.setText(decimalHours(existing.minutes));
+            body.addView(decimal, lpMatch(dp(58), dp(10)));
+            body.addView(label("Example: 8.5 = 8 hours 30 minutes", 12, MUTED, false), lpMatchWrap(dp(10)));
+        } else {
+            if (existing != null) clock.setText(clockHours(existing.minutes));
+            body.addView(clock, lpMatch(dp(58), dp(10)));
+            body.addView(label("Use H:MM clock form, from 0:01 through 24:00", 12, MUTED, false), lpMatchWrap(dp(10)));
         }
-        duration.addView(hours, new LinearLayout.LayoutParams(0, dp(58), 1));
-        duration.addView(gap(dp(10)));
-        duration.addView(minutes, new LinearLayout.LayoutParams(0, dp(58), 1));
-        body.addView(duration, lpMatchWrap(dp(10)));
         Button save = button(existing == null ? "Save hours" : "Update hours", TEAL, Color.WHITE);
         save.setOnClickListener(v -> {
-            int total = readDuration(hours, minutes);
+            int total = decimalHours ? readDecimalHours(decimal) : readClockHours(clock);
             if (total <= 0) { if (total == 0) toast("Enter the time you worked"); return; }
             if (total > 24 * 60) { toast("Hours for one date cannot exceed 24"); return; }
             db.saveHours(selectedHoursDate, total);
@@ -338,12 +350,13 @@ public final class MainActivity extends Activity {
         body.addView(save, lpMatch(dp(56), dp(24)));
 
         body.addView(sectionTitle("TOTAL"));
-        body.addView(filterBar(hoursFilter, false, f -> { hoursFilter = f; showHours(); }), lpMatchWrap(dp(14)));
-        LocalDate[] range = range(hoursFilter, AttendanceDb.TABLE_HOURS, false);
+        body.addView(hoursFilterBar(), lpMatchWrap(dp(14)));
+        LocalDate[] range = hoursRange(hoursFilter);
+        if (range == null) return;
         List<AttendanceDb.HoursEntry> entries = db.hoursBetween(range[0], range[1]);
         int total = 0;
         for (AttendanceDb.HoursEntry e : entries) total += e.minutes;
-        body.addView(statCard(PdfExporter.duration(total), filterLabel(hoursFilter, false), TEAL), lpMatch(dp(112), dp(18)));
+        body.addView(statCard(formatHours(total), hoursFilter.label, TEAL), lpMatch(dp(112), dp(18)));
         addHoursHistory(body, entries);
         Button export = outlineButton("Export this view as PDF");
         export.setOnClickListener(v -> exportHours(range, entries));
@@ -352,7 +365,31 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         LinearLayout body = page("Settings", "Personalize Attendance and protect your records.");
+        if (settingsNotice != null) {
+            body.addView(infoCard(settingsNotice), lpMatchWrap(dp(14)));
+            settingsNotice = null;
+        }
 
+        LinearLayout categories = horizontal();
+        Button general = choiceButton("General", settingsCategory == SettingsCategory.GENERAL);
+        Button time = choiceButton("Time", settingsCategory == SettingsCategory.TIME);
+        Button data = choiceButton("Data", settingsCategory == SettingsCategory.DATA);
+        general.setOnClickListener(v -> { settingsCategory = SettingsCategory.GENERAL; showSettings(); });
+        time.setOnClickListener(v -> { settingsCategory = SettingsCategory.TIME; showSettings(); });
+        data.setOnClickListener(v -> { settingsCategory = SettingsCategory.DATA; showSettings(); });
+        categories.addView(general, new LinearLayout.LayoutParams(0, dp(46), 1));
+        categories.addView(gap(dp(8)));
+        categories.addView(time, new LinearLayout.LayoutParams(0, dp(46), 1));
+        categories.addView(gap(dp(8)));
+        categories.addView(data, new LinearLayout.LayoutParams(0, dp(46), 1));
+        body.addView(categories, lpMatchWrap(dp(18)));
+
+        if (settingsCategory == SettingsCategory.GENERAL) addGeneralSettings(body);
+        else if (settingsCategory == SettingsCategory.TIME) addTimeSettings(body);
+        else addDataSettings(body);
+    }
+
+    private void addGeneralSettings(LinearLayout body) {
         body.addView(sectionTitle("APPEARANCE"));
         body.addView(toggleCard("Dark mode", "Use a dark color scheme throughout the app.", darkMode, (v, checked) -> {
             prefs.edit().putBoolean("dark_mode", checked).apply(); recreate();
@@ -372,10 +409,49 @@ public final class MainActivity extends Activity {
         startButtons.addView(startHours, new LinearLayout.LayoutParams(0, dp(48), 1));
         startCard.addView(startButtons);
         body.addView(startCard, lpMatchWrap(dp(18)));
+    }
 
+    private void addTimeSettings(LinearLayout body) {
         body.addView(sectionTitle("TARDY DETAILS"));
         body.addView(toggleCard("Track exact late time", "Show hours and minutes when marking a tardy.", prefs.getBoolean("track_late_minutes", false), (v, checked) -> prefs.edit().putBoolean("track_late_minutes", checked).apply()), lpMatchWrap(dp(18)));
 
+        body.addView(sectionTitle("HOURS FORMAT"));
+        body.addView(toggleCard("Use decimal hours", "On: decimal form (8.5). Off: 12/24-hour clock form (8:30).", prefs.getBoolean("decimal_hours", true), (v, checked) -> prefs.edit().putBoolean("decimal_hours", checked).apply()), lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("PAY PERIODS"));
+        LinearLayout periodCard = card();
+        periodCard.addView(label("Set your current pay period", 16, INK, true));
+        periodCard.addView(label("Choose its first and last date. Attendance automatically calculates the previous pay period using the same number of days.", 13, MUTED, false), lpMatchWrap(dp(12)));
+        LocalDate start = savedPayPeriodDate("pay_period_start");
+        LocalDate end = savedPayPeriodDate("pay_period_end");
+        LinearLayout dates = horizontal();
+        Button startButton = outlineButton(start == null ? "Start date" : shortPayDate(start));
+        Button endButton = outlineButton(end == null ? "End date" : shortPayDate(end));
+        startButton.setOnClickListener(v -> pickDateAllowFuture(start == null ? LocalDate.now() : start, picked -> {
+            prefs.edit().putString("pay_period_start", picked.toString()).apply();
+            showSettings();
+        }));
+        endButton.setOnClickListener(v -> pickDateAllowFuture(end == null ? LocalDate.now() : end, picked -> {
+            prefs.edit().putString("pay_period_end", picked.toString()).apply();
+            showSettings();
+        }));
+        dates.addView(startButton, new LinearLayout.LayoutParams(0, dp(52), 1));
+        dates.addView(gap(dp(10)));
+        dates.addView(endButton, new LinearLayout.LayoutParams(0, dp(52), 1));
+        periodCard.addView(dates);
+        if (start != null && end != null) {
+            if (end.isBefore(start)) {
+                periodCard.addView(label("The end date must be on or after the start date.", 12, CORAL, true), lpMatchWrap(dp(2)));
+            } else {
+                LocalDate[] previous = previousPayPeriod(start, end);
+                periodCard.addView(label("Current: " + payRangeLabel(start, end), 12, MUTED, false), lpMatchWrap(dp(2)));
+                periodCard.addView(label("Last: " + payRangeLabel(previous[0], previous[1]), 12, MUTED, false));
+            }
+        }
+        body.addView(periodCard, lpMatchWrap(dp(18)));
+    }
+
+    private void addDataSettings(LinearLayout body) {
         body.addView(sectionTitle("BACKUP & TRANSFER"));
         LinearLayout backupCard = card();
         backupCard.addView(label("Move all data between devices", 16, INK, true));
@@ -394,11 +470,10 @@ public final class MainActivity extends Activity {
         body.addView(sectionTitle("GOOGLE DRIVE"));
         boolean driveEnabled = prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri");
         body.addView(toggleCard("Google Drive sync", driveEnabled ? "Connected. Changes are written to your selected Drive file." : "Turn this on to create an Attendance backup file in Google Drive.", driveEnabled, (v, checked) -> {
-            if (checked) startDriveCreate();
-            else disconnectDrive();
+            if (checked) startDriveCreate(); else disconnectDrive();
         }), lpMatchWrap(dp(10)));
+        LinearLayout driveActions = horizontal();
         if (driveEnabled) {
-            LinearLayout driveActions = horizontal();
             Button sync = button("Sync now", TEAL, Color.WHITE);
             sync.setOnClickListener(v -> syncDrive(true));
             Button disconnect = outlineButton("Disconnect");
@@ -406,9 +481,7 @@ public final class MainActivity extends Activity {
             driveActions.addView(sync, new LinearLayout.LayoutParams(0, dp(52), 1));
             driveActions.addView(gap(dp(10)));
             driveActions.addView(disconnect, new LinearLayout.LayoutParams(0, dp(52), 1));
-            body.addView(driveActions, lpMatchWrap(dp(18)));
         } else {
-            LinearLayout driveActions = horizontal();
             Button create = button("Create Drive file", TEAL, Color.WHITE);
             create.setOnClickListener(v -> startDriveCreate());
             Button link = outlineButton("Link existing");
@@ -416,13 +489,12 @@ public final class MainActivity extends Activity {
             driveActions.addView(create, new LinearLayout.LayoutParams(0, dp(52), 1));
             driveActions.addView(gap(dp(10)));
             driveActions.addView(link, new LinearLayout.LayoutParams(0, dp(52), 1));
-            body.addView(driveActions, lpMatchWrap(dp(18)));
         }
+        body.addView(driveActions, lpMatchWrap(dp(18)));
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.3.2", 12, MUTED, false);
-        body.addView(version, lpMatchWrap(dp(16)));
+        body.addView(label("Attendance 1.4.1", 12, MUTED, false), lpMatchWrap(dp(16)));
     }
 
     private void showAttendanceHistory(String type) {
@@ -476,7 +548,7 @@ public final class MainActivity extends Activity {
         body.addView(sectionTitle("HISTORY"));
         if (entries.isEmpty()) { body.addView(emptyCard("No hours saved in this range."), lpMatchWrap(dp(18))); return; }
         for (AttendanceDb.HoursEntry e : entries) {
-            body.addView(historyRow(SHORT_DATE.format(e.date), PdfExporter.duration(e.minutes), () -> { selectedHoursDate = e.date; showHours(); }, () -> confirmDelete(() -> { db.deleteHours(e.id); syncDriveAfterChange(); showHours(); })), lpMatchWrap(dp(8)));
+            body.addView(historyRow(SHORT_DATE.format(e.date), formatHours(e.minutes), () -> { selectedHoursDate = e.date; showHours(); }, () -> confirmDelete(() -> { db.deleteHours(e.id); syncDriveAfterChange(); showHours(); })), lpMatchWrap(dp(8)));
         }
     }
 
@@ -711,6 +783,76 @@ public final class MainActivity extends Activity {
         return row;
     }
 
+    private HorizontalScrollView hoursFilterBar() {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = horizontal();
+        for (HoursFilter filter : HoursFilter.values()) {
+            Button button = button(filter.label, filter == hoursFilter ? NAVY : CARD_COLOR, filter == hoursFilter ? Color.WHITE : INK);
+            button.setBackground(filter == hoursFilter ? roundRect(NAVY, 20) : bordered(CARD_COLOR, BORDER, 20));
+            button.setOnClickListener(v -> {
+                if ((filter == HoursFilter.CURRENT_PAY_PERIOD || filter == HoursFilter.LAST_PAY_PERIOD) && !hasValidPayPeriod()) {
+                    mode = Mode.SETTINGS;
+                    settingsCategory = SettingsCategory.TIME;
+                    settingsNotice = "Set your current pay period start and end dates before using pay-period totals.";
+                    showSettings();
+                    return;
+                }
+                hoursFilter = filter;
+                showHours();
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42));
+            params.setMarginEnd(dp(8));
+            row.addView(button, params);
+        }
+        scroll.addView(row);
+        return scroll;
+    }
+
+    private LocalDate[] hoursRange(HoursFilter filter) {
+        LocalDate today = LocalDate.now();
+        LocalDate thisSunday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY));
+        if (filter == HoursFilter.CURRENT_WEEK) return new LocalDate[]{thisSunday, thisSunday.plusDays(6)};
+        if (filter == HoursFilter.LAST_WEEK) return new LocalDate[]{thisSunday.minusDays(7), thisSunday.minusDays(1)};
+        LocalDate start = savedPayPeriodDate("pay_period_start");
+        LocalDate end = savedPayPeriodDate("pay_period_end");
+        if (start == null || end == null || end.isBefore(start)) {
+            mode = Mode.SETTINGS;
+            settingsCategory = SettingsCategory.TIME;
+            settingsNotice = "Set a valid current pay period start and end date to use this filter.";
+            showSettings();
+            return null;
+        }
+        return filter == HoursFilter.CURRENT_PAY_PERIOD ? new LocalDate[]{start, end} : previousPayPeriod(start, end);
+    }
+
+    private LocalDate[] previousPayPeriod(LocalDate currentStart, LocalDate currentEnd) {
+        long days = ChronoUnit.DAYS.between(currentStart, currentEnd) + 1;
+        LocalDate lastEnd = currentStart.minusDays(1);
+        return new LocalDate[]{lastEnd.minusDays(days - 1), lastEnd};
+    }
+
+    private boolean hasValidPayPeriod() {
+        LocalDate start = savedPayPeriodDate("pay_period_start");
+        LocalDate end = savedPayPeriodDate("pay_period_end");
+        return start != null && end != null && !end.isBefore(start);
+    }
+
+    private LocalDate savedPayPeriodDate(String key) {
+        String value = prefs.getString(key, null);
+        if (value == null) return null;
+        try { return LocalDate.parse(value); }
+        catch (RuntimeException ignored) { return null; }
+    }
+
+    private String shortPayDate(LocalDate date) {
+        return date.format(DateTimeFormatter.ofPattern("EEE, MMM d, uuuu", Locale.US));
+    }
+
+    private String payRangeLabel(LocalDate start, LocalDate end) {
+        return shortPayDate(start) + " – " + shortPayDate(end);
+    }
+
     private HorizontalScrollView filterBar(Filter selected, boolean tardyMode, FilterAction action) {
         HorizontalScrollView scroll = new HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
@@ -736,25 +878,25 @@ public final class MainActivity extends Activity {
         switch (filter) {
             case DAYS_30: return new LocalDate[]{today.minusDays(29), today};
             case MONTH:
-                YearMonth month = tardyMode ? selectedTardyMonth : selectedHoursMonth;
+                YearMonth month = selectedTardyMonth;
                 LocalDate monthEnd = month.equals(YearMonth.now()) ? today : month.atEndOfMonth();
                 return new LocalDate[]{month.atDay(1), monthEnd};
             case YEAR:
-                int year = tardyMode ? selectedTardyYear : selectedHoursYear;
+                int year = selectedTardyYear;
                 return new LocalDate[]{LocalDate.of(year, 1, 1), year == today.getYear() ? today : LocalDate.of(year, 12, 31)};
             default: return new LocalDate[]{db.earliestDate(table), today};
         }
     }
 
     private String filterLabel(Filter filter, boolean tardyMode) {
-        if (filter == Filter.MONTH) return MONTH_LABEL.format(tardyMode ? selectedTardyMonth : selectedHoursMonth);
-        if (filter == Filter.YEAR) return String.valueOf(tardyMode ? selectedTardyYear : selectedHoursYear);
+        if (filter == Filter.MONTH) return MONTH_LABEL.format(selectedTardyMonth);
+        if (filter == Filter.YEAR) return String.valueOf(selectedTardyYear);
         return filter.label;
     }
 
     private void showMonthPicker(boolean tardyMode, FilterAction action) {
-        YearMonth selected = tardyMode ? selectedTardyMonth : selectedHoursMonth;
-        int selectedYear = tardyMode ? selectedTardyYear : selectedHoursYear;
+        YearMonth selected = selectedTardyMonth;
+        int selectedYear = selectedTardyYear;
         NumberPicker month = new NumberPicker(this);
         int maxMonth = selectedYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12;
         month.setMinValue(1); month.setMaxValue(maxMonth);
@@ -766,7 +908,7 @@ public final class MainActivity extends Activity {
         month.setWrapSelectorWheel(false);
         new AlertDialog.Builder(this).setTitle("Choose month in " + selectedYear).setView(month).setNegativeButton("Cancel", null).setPositiveButton("Use month", (d, w) -> {
             YearMonth choice = YearMonth.of(selectedYear, month.getValue());
-            if (tardyMode) selectedTardyMonth = choice; else selectedHoursMonth = choice;
+            selectedTardyMonth = choice;
             action.select(Filter.MONTH);
         }).show();
     }
@@ -774,19 +916,13 @@ public final class MainActivity extends Activity {
     private void showYearPicker(boolean tardyMode, FilterAction action) {
         NumberPicker year = new NumberPicker(this);
         year.setMinValue(2000); year.setMaxValue(LocalDate.now().getYear());
-        year.setValue(tardyMode ? selectedTardyYear : selectedHoursYear);
+        year.setValue(selectedTardyYear);
         year.setWrapSelectorWheel(false);
         new AlertDialog.Builder(this).setTitle("Choose year").setView(year).setNegativeButton("Cancel", null).setPositiveButton("Use year", (d, w) -> {
             int chosenYear = year.getValue();
-            if (tardyMode) {
-                selectedTardyYear = chosenYear;
-                int month = Math.min(selectedTardyMonth.getMonthValue(), chosenYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12);
-                selectedTardyMonth = YearMonth.of(chosenYear, month);
-            } else {
-                selectedHoursYear = chosenYear;
-                int month = Math.min(selectedHoursMonth.getMonthValue(), chosenYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12);
-                selectedHoursMonth = YearMonth.of(chosenYear, month);
-            }
+            selectedTardyYear = chosenYear;
+            int month = Math.min(selectedTardyMonth.getMonthValue(), chosenYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12);
+            selectedTardyMonth = YearMonth.of(chosenYear, month);
             action.select(Filter.YEAR);
         }).show();
     }
@@ -797,7 +933,7 @@ public final class MainActivity extends Activity {
     }
 
     private void exportHours(LocalDate[] range, List<AttendanceDb.HoursEntry> entries) {
-        try { share(PdfExporter.hours(this, filterLabel(hoursFilter, false), range[0], range[1], entries)); }
+        try { share(PdfExporter.hours(this, hoursFilter.label, range[0], range[1], entries, prefs.getBoolean("decimal_hours", true))); }
         catch (IOException e) { toast("Could not create the PDF"); }
     }
 
@@ -813,6 +949,10 @@ public final class MainActivity extends Activity {
         DatePickerDialog dialog = new DatePickerDialog(this, (v, y, m, d) -> action.select(LocalDate.of(y, m + 1, d)), initial.getYear(), initial.getMonthValue() - 1, initial.getDayOfMonth());
         dialog.getDatePicker().setMaxDate(System.currentTimeMillis());
         dialog.show();
+    }
+
+    private void pickDateAllowFuture(LocalDate initial, DateAction action) {
+        new DatePickerDialog(this, (v, y, m, d) -> action.select(LocalDate.of(y, m + 1, d)), initial.getYear(), initial.getMonthValue() - 1, initial.getDayOfMonth()).show();
     }
 
     private Button dateButton(LocalDate date) {
@@ -902,6 +1042,65 @@ public final class MainActivity extends Activity {
         e.setBackground(bordered(CARD_COLOR, BORDER, 14));
         e.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(maxDigits)});
         return e;
+    }
+
+    private EditText decimalField(String hint) {
+        EditText field = numberField(hint, 5);
+        field.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        return field;
+    }
+
+    private EditText clockField(String hint) {
+        EditText field = numberField(hint, 5);
+        field.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
+        return field;
+    }
+
+    private int readDecimalHours(EditText field) {
+        String value = field.getText().toString().trim();
+        if (value.isEmpty()) return 0;
+        try {
+            BigDecimal hours = new BigDecimal(value);
+            if (hours.signum() < 0) throw new NumberFormatException();
+            return hours.multiply(BigDecimal.valueOf(60)).setScale(0, RoundingMode.HALF_UP).intValueExact();
+        } catch (ArithmeticException | NumberFormatException ex) {
+            toast("Enter valid decimal hours, such as 8.5");
+            return -1;
+        }
+    }
+
+    private String decimalHours(int minutes) {
+        return BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
+    }
+
+    private String formatHours(int minutes) {
+        if (prefs.getBoolean("decimal_hours", true)) {
+            return BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP).setScale(2, RoundingMode.HALF_UP).toPlainString() + " hours";
+        }
+        return clockHours(minutes);
+    }
+
+    private int readClockHours(EditText field) {
+        String value = field.getText().toString().trim();
+        if (value.isEmpty()) return 0;
+        String[] parts = value.split(":", -1);
+        if (parts.length != 2) {
+            toast("Enter clock hours as H:MM, such as 8:30");
+            return -1;
+        }
+        try {
+            int hours = Integer.parseInt(parts[0]);
+            int minutes = Integer.parseInt(parts[1]);
+            if (hours < 0 || hours > 24 || minutes < 0 || minutes > 59 || (hours == 24 && minutes != 0)) throw new NumberFormatException();
+            return hours * 60 + minutes;
+        } catch (NumberFormatException ex) {
+            toast("Enter a time from 0:01 through 24:00");
+            return -1;
+        }
+    }
+
+    private String clockHours(int minutes) {
+        return String.format(Locale.US, "%d:%02d", minutes / 60, minutes % 60);
     }
 
     private int readDuration(EditText hours, EditText minutes) {
