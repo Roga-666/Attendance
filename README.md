@@ -15,11 +15,12 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 - Full JSON backup/import for moving records between devices
 - Optional Google Drive sync through a user-selected Drive backup file
 - Edge swipe or menu button to open the left-side navigation
+- App-logo shortcut to the selected default screen and consistent circular navigation icons
 - Private SQLite storage with no ads, analytics, or direct internet permission
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.1.0.apk` to your Android phone.
+1. Copy `Attendance-v1.1.1.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 

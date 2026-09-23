@@ -23,6 +23,8 @@ import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.NumberPicker;
 import android.widget.ScrollView;
@@ -92,11 +94,7 @@ public final class MainActivity extends Activity {
         window.setNavigationBarColor(NAVY);
         db = new AttendanceDb(this);
         buildShell();
-        if ("HOURS".equals(prefs.getString("default_mode", "TARDY"))) {
-            mode = Mode.HOURS; showHours();
-        } else {
-            mode = Mode.TARDY; showTardy();
-        }
+        showDefaultMode();
         if (prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri")) syncDrive(false);
     }
 
@@ -127,31 +125,61 @@ public final class MainActivity extends Activity {
     }
 
     private void buildDrawer() {
-        TextView icon = label("◷ !", 34, Color.WHITE, true);
-        icon.setGravity(Gravity.CENTER_VERTICAL);
-        drawer.addView(icon, lpMatchWrap(dp(12)));
+        LinearLayout brand = horizontal();
+        ImageButton logo = new ImageButton(this);
+        logo.setImageResource(R.mipmap.ic_launcher);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logo.setPadding(0, 0, 0, 0);
+        logo.setBackgroundColor(Color.TRANSPARENT);
+        logo.setContentDescription("Open default screen");
+        logo.setOnClickListener(v -> { closeDrawer(); showDefaultMode(); });
+        brand.addView(logo, new LinearLayout.LayoutParams(dp(72), dp(72)));
+        LinearLayout brandCopy = new LinearLayout(this);
+        brandCopy.setOrientation(LinearLayout.VERTICAL);
+        brandCopy.setPadding(dp(12), 0, 0, 0);
         TextView app = label("Attendance", 23, Color.WHITE, true);
-        drawer.addView(app, lpMatchWrap(dp(2)));
+        brandCopy.addView(app, lpMatchWrap(dp(2)));
         TextView tag = label("Keep your own record.", 13, Color.rgb(174, 201, 204), false);
-        drawer.addView(tag, lpMatchWrap(dp(30)));
-        drawer.addView(navButton("!   Tardy & call-outs", () -> { mode = Mode.TARDY; closeDrawer(); showTardy(); }));
-        drawer.addView(navButton("◷   Hours", () -> { mode = Mode.HOURS; closeDrawer(); showHours(); }));
-        drawer.addView(navButton("⚙   Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
+        brandCopy.addView(tag);
+        brand.addView(brandCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        drawer.addView(brand, lpMatchWrap(dp(26)));
+        drawer.addView(navButton("!", "Tardy & Call-Outs", () -> { mode = Mode.TARDY; closeDrawer(); showTardy(); }));
+        drawer.addView(navButton("◷", "Hours", () -> { mode = Mode.HOURS; closeDrawer(); showHours(); }));
+        drawer.addView(navButton("⚙", "Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
         Space space = new Space(this);
         drawer.addView(space, new LinearLayout.LayoutParams(1, 0, 1));
         TextView privacy = label("Private by default • Drive sync optional", 12, Color.rgb(154, 180, 185), false);
         drawer.addView(privacy);
     }
 
-    private Button navButton(String text, Runnable action) {
-        Button b = button(text, NAVY, Color.WHITE);
-        b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        b.setPadding(dp(16), 0, dp(12), 0);
-        b.setOnClickListener(v -> action.run());
-        b.setBackground(roundRect(Color.rgb(27, 46, 66), 14));
-        LinearLayout.LayoutParams p = lpMatch(dp(54), dp(8));
-        b.setLayoutParams(p);
-        return b;
+    private LinearLayout navButton(String iconText, String text, Runnable action) {
+        LinearLayout row = horizontal();
+        row.setPadding(dp(10), 0, dp(12), 0);
+        row.setBackground(roundRect(Color.rgb(27, 46, 66), 14));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setContentDescription(text);
+        row.setOnClickListener(v -> action.run());
+
+        TextView icon = label(iconText, 17, Color.WHITE, true);
+        icon.setGravity(Gravity.CENTER);
+        icon.setBackground(bordered(Color.rgb(38, 63, 85), TEAL, 100));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        TextView title = label(text, 14, Color.WHITE, true);
+        title.setPadding(dp(14), 0, 0, 0);
+        row.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.setLayoutParams(lpMatch(dp(56), dp(8)));
+        return row;
+    }
+
+    private void showDefaultMode() {
+        if ("HOURS".equals(prefs.getString("default_mode", "TARDY"))) {
+            mode = Mode.HOURS;
+            showHours();
+        } else {
+            mode = Mode.TARDY;
+            showTardy();
+        }
     }
 
     private void toolbar(String title) {
@@ -356,7 +384,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.1.0", 12, MUTED, false);
+        TextView version = label("Attendance 1.1.1", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
