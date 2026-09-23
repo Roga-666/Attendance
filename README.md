@@ -10,17 +10,18 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 - **Last 30 days, chosen month, chosen year, and all-time** filters
 - A cumulative hours total and separate tardy/call-out counts
 - Editable history with deletion confirmation
+- Explicit Edit and Delete controls for correcting tardies and call-outs
 - Native **PDF export and Android share sheet** for the active mode and filter
 - Light and dark themes plus a choice of default opening mode
 - Full JSON backup/import for moving records between devices
-- Optional Google Drive sync through a user-selected Drive backup file
+- Optional Google Drive sync with visible create-file, link-file, sync, and disconnect controls
 - Edge swipe or menu button to open the left-side navigation
 - App-logo shortcut to the selected default screen and consistent circular navigation icons
 - Private SQLite storage with no ads, analytics, or direct internet permission
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.1.1.apk` to your Android phone.
+1. Copy `Attendance-v1.2.0.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 

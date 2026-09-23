@@ -236,7 +236,7 @@ public final class MainActivity extends Activity {
         LinearLayout stats = horizontal();
         stats.addView(statCard(String.valueOf(tardies), "Tardies", CORAL), new LinearLayout.LayoutParams(0, dp(106), 1));
         stats.addView(gap(dp(10)));
-        stats.addView(statCard(String.valueOf(calls), "Call-outs", NAVY), new LinearLayout.LayoutParams(0, dp(106), 1));
+        stats.addView(statCard(String.valueOf(calls), "Call-outs", darkMode ? INK : NAVY), new LinearLayout.LayoutParams(0, dp(106), 1));
         body.addView(stats, lpMatchWrap(dp(10)));
         if (prefs.getBoolean("track_late_minutes", false) && lateTotal > 0) body.addView(infoCard(PdfExporter.duration(lateTotal) + " total late in this filter"), lpMatchWrap(dp(14)));
 
@@ -372,19 +372,35 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("GOOGLE DRIVE"));
         boolean driveEnabled = prefs.getBoolean("drive_sync", false) && prefs.contains("drive_uri");
-        body.addView(toggleCard("Google Drive sync", "Link a backup file in Google Drive. Attendance merges it on startup and updates it after changes.", driveEnabled, (v, checked) -> {
-            if (checked) chooseDriveSetup();
-            else { prefs.edit().putBoolean("drive_sync", false).remove("drive_uri").apply(); toast("Google Drive sync disconnected"); showSettings(); }
+        body.addView(toggleCard("Google Drive sync", driveEnabled ? "Connected. Changes are written to your selected Drive file." : "Turn this on to create an Attendance backup file in Google Drive.", driveEnabled, (v, checked) -> {
+            if (checked) startDriveCreate();
+            else disconnectDrive();
         }), lpMatchWrap(dp(10)));
         if (driveEnabled) {
+            LinearLayout driveActions = horizontal();
             Button sync = button("Sync now", TEAL, Color.WHITE);
             sync.setOnClickListener(v -> syncDrive(true));
-            body.addView(sync, lpMatch(dp(52), dp(18)));
+            Button disconnect = outlineButton("Disconnect");
+            disconnect.setOnClickListener(v -> disconnectDrive());
+            driveActions.addView(sync, new LinearLayout.LayoutParams(0, dp(52), 1));
+            driveActions.addView(gap(dp(10)));
+            driveActions.addView(disconnect, new LinearLayout.LayoutParams(0, dp(52), 1));
+            body.addView(driveActions, lpMatchWrap(dp(18)));
+        } else {
+            LinearLayout driveActions = horizontal();
+            Button create = button("Create Drive file", TEAL, Color.WHITE);
+            create.setOnClickListener(v -> startDriveCreate());
+            Button link = outlineButton("Link existing");
+            link.setOnClickListener(v -> startDriveOpen());
+            driveActions.addView(create, new LinearLayout.LayoutParams(0, dp(52), 1));
+            driveActions.addView(gap(dp(10)));
+            driveActions.addView(link, new LinearLayout.LayoutParams(0, dp(52), 1));
+            body.addView(driveActions, lpMatchWrap(dp(18)));
         }
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.1.1", 12, MUTED, false);
+        TextView version = label("Attendance 1.2.0", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
@@ -393,7 +409,7 @@ public final class MainActivity extends Activity {
         if (entries.isEmpty()) { body.addView(emptyCard("No tardies or call-outs in this range."), lpMatchWrap(dp(18))); return; }
         for (AttendanceDb.AttendanceEntry e : entries) {
             String detail = e.type + (e.type.equals(AttendanceDb.TARDY) && e.lateMinutes > 0 ? " • " + PdfExporter.duration(e.lateMinutes) + " late" : "");
-            body.addView(historyRow(SHORT_DATE.format(e.date), detail, () -> { selectedTardyDate = e.date; showTardy(); }, () -> confirmDelete(() -> { db.deleteAttendance(e.id); syncDriveAfterChange(); showTardy(); })), lpMatchWrap(dp(8)));
+            body.addView(historyRow(SHORT_DATE.format(e.date), detail, () -> showAttendanceEditor(e), () -> confirmDelete(() -> { db.deleteAttendance(e.id); syncDriveAfterChange(); showTardy(); })), lpMatchWrap(dp(8)));
         }
     }
 
@@ -443,20 +459,29 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, IMPORT_BACKUP);
     }
 
-    private void chooseDriveSetup() {
-        new AlertDialog.Builder(this)
-                .setTitle("Set up Google Drive sync")
-                .setMessage("In the next file picker, choose Google Drive. You can create a new Attendance backup or link an existing one.")
-                .setItems(new String[]{"Create new Drive backup", "Link existing Drive backup"}, (dialog, which) -> {
-                    Intent intent = new Intent(which == 0 ? Intent.ACTION_CREATE_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("application/json");
-                    if (which == 0) intent.putExtra(Intent.EXTRA_TITLE, "Attendance-Drive-Backup.json");
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-                    startActivityForResult(intent, which == 0 ? DRIVE_CREATE : DRIVE_OPEN);
-                })
-                .setNegativeButton("Cancel", (dialog, which) -> showSettings())
-                .show();
+    private void startDriveCreate() {
+        toast("Choose Google Drive from the Locations menu");
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "Attendance-Drive-Backup.json");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, DRIVE_CREATE);
+    }
+
+    private void startDriveOpen() {
+        toast("Choose your Attendance backup file in Google Drive");
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, DRIVE_OPEN);
+    }
+
+    private void disconnectDrive() {
+        prefs.edit().putBoolean("drive_sync", false).remove("drive_uri").apply();
+        toast("Google Drive sync disconnected");
+        showSettings();
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -472,13 +497,34 @@ public final class MainActivity extends Activity {
             importBackup(uri);
         } else if (requestCode == DRIVE_CREATE || requestCode == DRIVE_OPEN) {
             try {
-                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                getContentResolver().takePersistableUriPermission(uri, flags);
             } catch (SecurityException ignored) { }
-            prefs.edit().putString("drive_uri", uri.toString()).putBoolean("drive_sync", true).apply();
-            if (requestCode == DRIVE_CREATE) writeBackup(uri, "Google Drive sync connected");
-            else syncDrive(true);
             showSettings();
+            connectDriveFile(uri, requestCode == DRIVE_CREATE);
         }
+    }
+
+    private void connectDriveFile(Uri uri, boolean createNew) {
+        new Thread(() -> {
+            try {
+                if (!createNew) {
+                    String cloud = BackupManager.read(getContentResolver(), uri);
+                    if (!cloud.trim().isEmpty()) BackupManager.mergeJson(db, cloud);
+                }
+                BackupManager.write(getContentResolver(), uri, BackupManager.createJson(db));
+                prefs.edit().putString("drive_uri", uri.toString()).putBoolean("drive_sync", true).apply();
+                runOnUiThread(() -> {
+                    toast(createNew ? "Drive sync file created" : "Drive backup linked and synced");
+                    refreshCurrentMode();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    toast(createNew ? "Could not create the Drive sync file" : "Could not link that Drive backup");
+                    showSettings();
+                });
+            }
+        }).start();
     }
 
     private void writeBackup(Uri uri, String successMessage) {
@@ -541,6 +587,46 @@ public final class MainActivity extends Activity {
         else showSettings();
     }
 
+    private void showAttendanceEditor(AttendanceDb.AttendanceEntry entry) {
+        boolean trackLate = prefs.getBoolean("track_late_minutes", false);
+        int[] selectedType = {entry.type.equals(AttendanceDb.TARDY) ? 1 : 0};
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+        form.addView(label(SHORT_DATE.format(entry.date), 14, MUTED, true), lpMatchWrap(dp(10)));
+
+        EditText lateHours = numberField("Hours late", 2);
+        EditText lateMinutes = numberField("Minutes late", 2);
+        if (trackLate) {
+            lateHours.setText(String.valueOf(entry.lateMinutes / 60));
+            lateMinutes.setText(String.valueOf(entry.lateMinutes % 60));
+            form.addView(label("Late time (used only for Tardy)", 13, MUTED, false), lpMatchWrap(dp(7)));
+            LinearLayout duration = horizontal();
+            duration.addView(lateHours, new LinearLayout.LayoutParams(0, dp(54), 1));
+            duration.addView(gap(dp(10)));
+            duration.addView(lateMinutes, new LinearLayout.LayoutParams(0, dp(54), 1));
+            form.addView(duration);
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Edit attendance entry")
+                .setSingleChoiceItems(new String[]{"Called Out", "Tardy"}, selectedType[0], (d, which) -> selectedType[0] = which)
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save changes", null)
+                .create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            int minutes = trackLate && selectedType[0] == 1 ? readDuration(lateHours, lateMinutes) : (selectedType[0] == 1 ? entry.lateMinutes : 0);
+            if (minutes < 0) return;
+            db.saveAttendance(entry.date, selectedType[0] == 1 ? AttendanceDb.TARDY : AttendanceDb.CALLED_OUT, minutes);
+            syncDriveAfterChange();
+            dialog.dismiss();
+            toast("Attendance entry updated");
+            showTardy();
+        }));
+        dialog.show();
+    }
+
     private View historyRow(String title, String detail, Runnable edit, Runnable delete) {
         LinearLayout row = card();
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -549,13 +635,19 @@ public final class MainActivity extends Activity {
         copy.setOrientation(LinearLayout.VERTICAL);
         copy.addView(label(title, 15, INK, true));
         copy.addView(label(detail, 13, MUTED, false));
-        copy.setOnClickListener(v -> edit.run());
-        row.addView(copy, new LinearLayout.LayoutParams(0, dp(54), 1));
-        Button remove = button("×", Color.TRANSPARENT, CORAL);
-        remove.setTextSize(26);
+        row.addView(copy, new LinearLayout.LayoutParams(0, dp(58), 1));
+        Button editButton = button("Edit", Color.TRANSPARENT, darkMode ? TEAL : NAVY);
+        editButton.setBackground(bordered(Color.TRANSPARENT, darkMode ? TEAL : NAVY, 12));
+        editButton.setContentDescription("Edit entry");
+        editButton.setOnClickListener(v -> edit.run());
+        row.addView(editButton, new LinearLayout.LayoutParams(dp(64), dp(44)));
+        row.addView(gap(dp(7)));
+        Button remove = button("Delete", Color.TRANSPARENT, CORAL);
+        remove.setTextSize(12);
+        remove.setBackground(bordered(Color.TRANSPARENT, CORAL, 12));
         remove.setContentDescription("Delete entry");
         remove.setOnClickListener(v -> delete.run());
-        row.addView(remove, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        row.addView(remove, new LinearLayout.LayoutParams(dp(72), dp(44)));
         return row;
     }
 
@@ -602,18 +694,18 @@ public final class MainActivity extends Activity {
 
     private void showMonthPicker(boolean tardyMode, FilterAction action) {
         YearMonth selected = tardyMode ? selectedTardyMonth : selectedHoursMonth;
-        LinearLayout pickers = horizontal();
-        pickers.setPadding(dp(16), dp(4), dp(16), 0);
+        int selectedYear = tardyMode ? selectedTardyYear : selectedHoursYear;
         NumberPicker month = new NumberPicker(this);
-        month.setMinValue(1); month.setMaxValue(12); month.setValue(selected.getMonthValue());
-        month.setDisplayedValues(new String[]{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"});
-        NumberPicker year = new NumberPicker(this);
-        year.setMinValue(2000); year.setMaxValue(LocalDate.now().getYear()); year.setValue(selected.getYear());
-        pickers.addView(month, new LinearLayout.LayoutParams(0, dp(180), 1));
-        pickers.addView(year, new LinearLayout.LayoutParams(0, dp(180), 1));
-        new AlertDialog.Builder(this).setTitle("Choose month").setView(pickers).setNegativeButton("Cancel", null).setPositiveButton("Use month", (d, w) -> {
-            YearMonth choice = YearMonth.of(year.getValue(), month.getValue());
-            if (choice.isAfter(YearMonth.now())) { toast("Choose the current month or an earlier month"); return; }
+        int maxMonth = selectedYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12;
+        month.setMinValue(1); month.setMaxValue(maxMonth);
+        month.setValue(Math.min(selected.getMonthValue(), maxMonth));
+        String[] monthNames = new String[]{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+        String[] displayedMonths = new String[maxMonth];
+        System.arraycopy(monthNames, 0, displayedMonths, 0, maxMonth);
+        month.setDisplayedValues(displayedMonths);
+        month.setWrapSelectorWheel(false);
+        new AlertDialog.Builder(this).setTitle("Choose month in " + selectedYear).setView(month).setNegativeButton("Cancel", null).setPositiveButton("Use month", (d, w) -> {
+            YearMonth choice = YearMonth.of(selectedYear, month.getValue());
             if (tardyMode) selectedTardyMonth = choice; else selectedHoursMonth = choice;
             action.select(Filter.MONTH);
         }).show();
@@ -625,7 +717,16 @@ public final class MainActivity extends Activity {
         year.setValue(tardyMode ? selectedTardyYear : selectedHoursYear);
         year.setWrapSelectorWheel(false);
         new AlertDialog.Builder(this).setTitle("Choose year").setView(year).setNegativeButton("Cancel", null).setPositiveButton("Use year", (d, w) -> {
-            if (tardyMode) selectedTardyYear = year.getValue(); else selectedHoursYear = year.getValue();
+            int chosenYear = year.getValue();
+            if (tardyMode) {
+                selectedTardyYear = chosenYear;
+                int month = Math.min(selectedTardyMonth.getMonthValue(), chosenYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12);
+                selectedTardyMonth = YearMonth.of(chosenYear, month);
+            } else {
+                selectedHoursYear = chosenYear;
+                int month = Math.min(selectedHoursMonth.getMonthValue(), chosenYear == LocalDate.now().getYear() ? LocalDate.now().getMonthValue() : 12);
+                selectedHoursMonth = YearMonth.of(chosenYear, month);
+            }
             action.select(Filter.YEAR);
         }).show();
     }
