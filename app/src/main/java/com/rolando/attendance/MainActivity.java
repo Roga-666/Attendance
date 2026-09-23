@@ -78,6 +78,7 @@ public final class MainActivity extends Activity {
     private int selectedHoursYear = LocalDate.now().getYear();
     private LocalDate selectedTardyDate = LocalDate.now();
     private LocalDate selectedHoursDate = LocalDate.now();
+    private String activeAttendanceHistoryType;
 
     @Override protected void onCreate(Bundle state) {
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
@@ -143,13 +144,11 @@ public final class MainActivity extends Activity {
         brandCopy.addView(tag);
         brand.addView(brandCopy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         drawer.addView(brand, lpMatchWrap(dp(26)));
-        drawer.addView(navButton("!", "Tardy & Call-Outs", () -> { mode = Mode.TARDY; closeDrawer(); showTardy(); }));
+        drawer.addView(navButton("!", "Tardy & Call-Outs", () -> { mode = Mode.TARDY; activeAttendanceHistoryType = null; closeDrawer(); showTardy(); }));
         drawer.addView(navButton("◷", "Hours", () -> { mode = Mode.HOURS; closeDrawer(); showHours(); }));
         drawer.addView(navButton("⚙", "Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
         Space space = new Space(this);
         drawer.addView(space, new LinearLayout.LayoutParams(1, 0, 1));
-        TextView privacy = label("Private by default • Drive sync optional", 12, Color.rgb(154, 180, 185), false);
-        drawer.addView(privacy);
     }
 
     private LinearLayout navButton(String iconText, String text, Runnable action) {
@@ -183,23 +182,36 @@ public final class MainActivity extends Activity {
     }
 
     private void toolbar(String title) {
+        toolbar(title, false);
+    }
+
+    private void toolbar(String title, boolean showBack) {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(10), dp(6), dp(16), dp(6));
         bar.setBackgroundColor(NAVY);
-        Button menu = button("☰", NAVY, Color.WHITE);
-        menu.setTextSize(25);
-        menu.setContentDescription("Open navigation");
-        menu.setOnClickListener(v -> openDrawer());
-        bar.addView(menu, new LinearLayout.LayoutParams(dp(54), dp(54)));
+        Button navigation = button(showBack ? "‹" : "☰", NAVY, Color.WHITE);
+        navigation.setTextSize(showBack ? 36 : 25);
+        navigation.setContentDescription(showBack ? "Back to summary" : "Open navigation");
+        navigation.setOnClickListener(v -> {
+            if (showBack) {
+                activeAttendanceHistoryType = null;
+                showTardy();
+            } else openDrawer();
+        });
+        bar.addView(navigation, new LinearLayout.LayoutParams(dp(54), dp(54)));
         TextView heading = label(title, 20, Color.WHITE, true);
         bar.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         content.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)));
     }
 
     private LinearLayout page(String title, String subtitle) {
+        return page(title, subtitle, false);
+    }
+
+    private LinearLayout page(String title, String subtitle, boolean showBack) {
         content.removeAllViews();
-        toolbar(title);
+        toolbar(title, showBack);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout body = new LinearLayout(this);
@@ -212,11 +224,21 @@ public final class MainActivity extends Activity {
     }
 
     private void showTardy() {
+        activeAttendanceHistoryType = null;
         LinearLayout body = page("Tardy", "Record a tardy or call-out for today—or choose an earlier date.");
         body.addView(sectionTitle("DATE"));
         Button date = dateButton(selectedTardyDate);
         date.setOnClickListener(v -> pickDate(selectedTardyDate, picked -> { selectedTardyDate = picked; showTardy(); }));
-        body.addView(date, lpMatch(dp(58), dp(18)));
+        LinearLayout dateRow = horizontal();
+        dateRow.addView(date, new LinearLayout.LayoutParams(0, dp(58), 1));
+        dateRow.addView(gap(dp(10)));
+        Button today = outlineButton("↻ Today");
+        today.setContentDescription("Reset date to today");
+        today.setEnabled(!selectedTardyDate.equals(LocalDate.now()));
+        today.setAlpha(today.isEnabled() ? 1f : .45f);
+        today.setOnClickListener(v -> { selectedTardyDate = LocalDate.now(); showTardy(); });
+        dateRow.addView(today, new LinearLayout.LayoutParams(dp(96), dp(58)));
+        body.addView(dateRow, lpMatchWrap(dp(18)));
 
         AttendanceDb.AttendanceEntry existing = db.attendanceFor(selectedTardyDate);
         if (existing != null) {
@@ -234,9 +256,9 @@ public final class MainActivity extends Activity {
             if (e.type.equals(AttendanceDb.TARDY)) { tardies++; lateTotal += e.lateMinutes; } else calls++;
         }
         LinearLayout stats = horizontal();
-        stats.addView(statCard(String.valueOf(tardies), "Tardies", CORAL), new LinearLayout.LayoutParams(0, dp(106), 1));
+        stats.addView(attendanceStatCard(String.valueOf(tardies), "Tardies", AttendanceDb.TARDY), new LinearLayout.LayoutParams(0, dp(106), 1));
         stats.addView(gap(dp(10)));
-        stats.addView(statCard(String.valueOf(calls), "Call-outs", darkMode ? INK : NAVY), new LinearLayout.LayoutParams(0, dp(106), 1));
+        stats.addView(attendanceStatCard(String.valueOf(calls), "Call-Outs", AttendanceDb.CALLED_OUT), new LinearLayout.LayoutParams(0, dp(106), 1));
         body.addView(stats, lpMatchWrap(dp(10)));
         if (prefs.getBoolean("track_late_minutes", false) && lateTotal > 0) body.addView(infoCard(PdfExporter.duration(lateTotal) + " total late in this filter"), lpMatchWrap(dp(14)));
 
@@ -279,7 +301,6 @@ public final class MainActivity extends Activity {
         actions.addView(gap(dp(10)));
         actions.addView(tardy, new LinearLayout.LayoutParams(0, dp(56), 1));
         body.addView(actions, lpMatchWrap(dp(12)));
-        addAttendanceHistory(body, entries);
         Button export = outlineButton("Export this view as PDF");
         export.setOnClickListener(v -> exportAttendance(range, entries));
         body.addView(export, lpMatch(dp(56), dp(4)));
@@ -400,17 +421,53 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.2.0", 12, MUTED, false);
+        TextView version = label("Attendance 1.3.0", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
-    private void addAttendanceHistory(LinearLayout body, List<AttendanceDb.AttendanceEntry> entries) {
-        body.addView(sectionTitle("HISTORY"));
-        if (entries.isEmpty()) { body.addView(emptyCard("No tardies or call-outs in this range."), lpMatchWrap(dp(18))); return; }
-        for (AttendanceDb.AttendanceEntry e : entries) {
-            String detail = e.type + (e.type.equals(AttendanceDb.TARDY) && e.lateMinutes > 0 ? " • " + PdfExporter.duration(e.lateMinutes) + " late" : "");
-            body.addView(historyRow(SHORT_DATE.format(e.date), detail, () -> showAttendanceEditor(e), () -> confirmDelete(() -> { db.deleteAttendance(e.id); syncDriveAfterChange(); showTardy(); })), lpMatchWrap(dp(8)));
+    private void showAttendanceHistory(String type) {
+        activeAttendanceHistoryType = type;
+        mode = Mode.TARDY;
+        LinearLayout body = page("History", "Review, edit, or delete your attendance records.", true);
+        body.addView(sectionTitle("VIEW"));
+        LinearLayout tabs = horizontal();
+        Button tardies = choiceButton("Tardies", AttendanceDb.TARDY.equals(type));
+        Button callOuts = choiceButton("Call-Outs", AttendanceDb.CALLED_OUT.equals(type));
+        tardies.setOnClickListener(v -> showAttendanceHistory(AttendanceDb.TARDY));
+        callOuts.setOnClickListener(v -> showAttendanceHistory(AttendanceDb.CALLED_OUT));
+        tabs.addView(tardies, new LinearLayout.LayoutParams(0, dp(48), 1));
+        tabs.addView(gap(dp(10)));
+        tabs.addView(callOuts, new LinearLayout.LayoutParams(0, dp(48), 1));
+        body.addView(tabs, lpMatchWrap(dp(18)));
+
+        body.addView(sectionTitle("FILTER"));
+        body.addView(filterBar(tardyFilter, true, f -> { tardyFilter = f; showAttendanceHistory(type); }), lpMatchWrap(dp(14)));
+        LocalDate[] range = range(tardyFilter, AttendanceDb.TABLE_ATTENDANCE, true);
+        List<AttendanceDb.AttendanceEntry> allEntries = db.attendanceBetween(range[0], range[1]);
+        java.util.ArrayList<AttendanceDb.AttendanceEntry> entries = new java.util.ArrayList<>();
+        for (AttendanceDb.AttendanceEntry entry : allEntries) if (entry.type.equals(type)) entries.add(entry);
+
+        body.addView(sectionTitle(type.equals(AttendanceDb.TARDY) ? "TARDIES" : "CALL-OUTS"));
+        if (entries.isEmpty()) {
+            body.addView(emptyCard(type.equals(AttendanceDb.TARDY) ? "No tardies in this range." : "No call-outs in this range."), lpMatchWrap(dp(18)));
+        } else {
+            for (AttendanceDb.AttendanceEntry entry : entries) {
+                String detail = entry.type.equals(AttendanceDb.TARDY) && entry.lateMinutes > 0 ? PdfExporter.duration(entry.lateMinutes) + " late" : "Called Out";
+                body.addView(historyRow(SHORT_DATE.format(entry.date), detail,
+                        () -> showAttendanceEditor(entry),
+                        () -> confirmDelete(() -> {
+                            db.deleteAttendance(entry.id);
+                            syncDriveAfterChange();
+                            showAttendanceHistory(type);
+                        })), lpMatchWrap(dp(8)));
+            }
         }
+        Button export = outlineButton("Export this history as PDF");
+        export.setOnClickListener(v -> {
+            try { share(PdfExporter.attendance(this, (type.equals(AttendanceDb.TARDY) ? "Tardies • " : "Call-Outs • ") + filterLabel(tardyFilter, true), range[0], range[1], entries)); }
+            catch (IOException e) { toast("Could not create the PDF"); }
+        });
+        body.addView(export, lpMatch(dp(56), dp(4)));
     }
 
     private void addHoursHistory(LinearLayout body, List<AttendanceDb.HoursEntry> entries) {
@@ -582,7 +639,8 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshCurrentMode() {
-        if (mode == Mode.TARDY) showTardy();
+        if (mode == Mode.TARDY && activeAttendanceHistoryType != null) showAttendanceHistory(activeAttendanceHistoryType);
+        else if (mode == Mode.TARDY) showTardy();
         else if (mode == Mode.HOURS) showHours();
         else showSettings();
     }
@@ -622,7 +680,7 @@ public final class MainActivity extends Activity {
             syncDriveAfterChange();
             dialog.dismiss();
             toast("Attendance entry updated");
-            showTardy();
+            if (activeAttendanceHistoryType != null) showAttendanceHistory(activeAttendanceHistoryType); else showTardy();
         }));
         dialog.show();
     }
@@ -769,6 +827,15 @@ public final class MainActivity extends Activity {
         TextView number = label(value, value.length() > 8 ? 25 : 34, accent, true);
         card.addView(number);
         card.addView(label(caption, 13, MUTED, false));
+        return card;
+    }
+
+    private LinearLayout attendanceStatCard(String value, String caption, String type) {
+        LinearLayout card = statCard(value, caption, darkMode ? INK : NAVY);
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setContentDescription(caption + ": " + value + ". Tap to view history.");
+        card.setOnClickListener(v -> showAttendanceHistory(type));
         return card;
     }
 
