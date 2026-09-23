@@ -421,7 +421,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        TextView version = label("Attendance 1.3.1", 12, MUTED, false);
+        TextView version = label("Attendance 1.3.2", 12, MUTED, false);
         body.addView(version, lpMatchWrap(dp(16)));
     }
 
@@ -452,7 +452,9 @@ public final class MainActivity extends Activity {
             body.addView(emptyCard(type.equals(AttendanceDb.TARDY) ? "No tardies in this range." : "No call-outs in this range."), lpMatchWrap(dp(18)));
         } else {
             for (AttendanceDb.AttendanceEntry entry : entries) {
-                String detail = entry.type.equals(AttendanceDb.TARDY) && entry.lateMinutes > 0 ? PdfExporter.duration(entry.lateMinutes) + " late" : "Called Out";
+                String detail = entry.type.equals(AttendanceDb.TARDY)
+                        ? (entry.lateMinutes > 0 ? "Tardy • " + PdfExporter.duration(entry.lateMinutes) + " late" : "Tardy")
+                        : "Called Out";
                 body.addView(historyRow(SHORT_DATE.format(entry.date), detail,
                         () -> showAttendanceEditor(entry),
                         () -> confirmDelete(() -> {
