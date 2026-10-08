@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "1.4.1-web.1";
+const VERSION = "1.4.2-web.1";
 const STORAGE_KEY = "attendance-web-data-v2";
 const SETTINGS_KEY = "attendance-web-settings-v1";
 const TARDY = "Tardy";
@@ -30,7 +30,7 @@ function loadData() {
 }
 function emptyData() { return { attendance: {}, hours: {}, deleted: {} }; }
 function loadSettings() {
-  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"" };
+  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"", attendanceButtonMode:"BOTH", attendanceButtonTarget:"TARDY", attendanceButtonTeal:false };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; }
   catch { return defaults; }
 }
@@ -102,7 +102,7 @@ function renderTardy() {
     ${section("SUMMARY")}<div class="filter-scroll">${tardyFilters()}</div>
     <div class="stats"><button class="card stat clickable" data-history="${CALLED_OUT}"><span class="stat-value">${calls.length}</span><span class="stat-caption">Call-Outs</span></button><button class="card stat clickable" data-history="${TARDY}"><span class="stat-value">${tardies.length}</span><span class="stat-caption">Tardies</span></button></div><div class="spacer-10"></div>
     ${settings.trackLateMinutes&&late?info(`${duration(late)} total late in this filter`):""}
-    ${section("MARK THIS DATE")}${lateInputs}<div class="button-row"><button class="primary navy" data-action="called-out">Called Out</button><button class="primary coral" data-action="tardy">Tardy</button></div><div class="spacer-10"></div><button class="outline full" data-export="attendance">Export this view as PDF</button>`;
+    ${section("MARK THIS DATE")}${lateInputs}<div class="button-row"><button class="${attendanceButtonClass("CALLED_OUT")}" data-action="called-out">Called Out</button><button class="${attendanceButtonClass("TARDY")}" data-action="tardy">Tardy</button></div><div class="spacer-10"></div><button class="outline full" data-export="attendance">Export this view as PDF</button>`;
   app.innerHTML = shell("Tardy & Call-Outs","Record a tardy or call-out for today—or choose an earlier date.",body);
 }
 function tardyFilters() {
@@ -118,6 +118,10 @@ function tardyRange() {
   const dates=Object.keys(state.attendance).sort(); return [dates[0]||now,now];
 }
 function attendanceBetween(from,to) { return Object.values(state.attendance).filter(e=>e.date>=from&&e.date<=to).sort(byDateDesc); }
+function attendanceButtonClass(target) {
+  const colored=settings.attendanceButtonMode==="BOTH"||settings.attendanceButtonTarget===target;
+  return colored ? `primary ${settings.attendanceButtonTeal?"":"coral"}`.trim() : "primary navy";
+}
 
 function renderHours() {
   const existing=state.hours[selectedHoursDate];
@@ -159,12 +163,17 @@ function renderHistory() {
 function renderSettings() {
   const tabs=`<div class="setting-tabs"><button class="choice${settingsCategory==="general"?" active":""}" data-settings-tab="general">General</button><button class="choice${settingsCategory==="time"?" active":""}" data-settings-tab="time">Time</button><button class="choice${settingsCategory==="data"?" active":""}" data-settings-tab="data">Data</button></div><div class="spacer-18"></div>`;
   let content;
-  if (settingsCategory==="general") content=`${section("APPEARANCE")}${toggle("Dark mode","Use a dark color scheme throughout the app.","darkMode",settings.darkMode)}<div class="spacer-18"></div>${section("DEFAULT OPENING SCREEN")}<div class="card"><div class="card-title">Choose where Attendance opens</div><div class="spacer-10"></div><div class="button-row"><button class="choice${settings.defaultMode==="TARDY"?" active":""}" data-default="TARDY">Tardy</button><button class="choice${settings.defaultMode==="HOURS"?" active":""}" data-default="HOURS">Hours</button></div></div>`;
+  if (settingsCategory==="general") content=`${section("APPEARANCE")}${toggle("Dark mode","Use a dark color scheme throughout the app.","darkMode",settings.darkMode)}<div class="spacer-18"></div>${section("ATTENDANCE BUTTONS")}${attendanceButtonSettings()}<div class="spacer-18"></div>${section("DEFAULT OPENING SCREEN")}<div class="card"><div class="card-title">Choose where Attendance opens</div><div class="spacer-10"></div><div class="button-row"><button class="choice${settings.defaultMode==="TARDY"?" active":""}" data-default="TARDY">Tardy</button><button class="choice${settings.defaultMode==="HOURS"?" active":""}" data-default="HOURS">Hours</button></div></div>`;
   else if (settingsCategory==="time") content=`${section("TARDY DETAILS")}${toggle("Track exact late time","Show hours and minutes when marking a tardy.","trackLateMinutes",settings.trackLateMinutes)}<div class="spacer-18"></div>${section("HOURS FORMAT")}${toggle("Use decimal hours","On: decimal form (8.5). Off: 12/24-hour clock form (8:30).","decimalHours",settings.decimalHours)}<div class="spacer-18"></div>${section("PAY PERIODS")}${payPeriodCard()}`;
   else content=`${section("BACKUP & TRANSFER")}<div class="card"><div class="card-title">Move all data between devices</div><div class="card-detail">Export one backup file containing tardies, call-outs, hours, and deletions. Android and web use the same backup format, and importing merges the newest records.</div><div class="spacer-10"></div><div class="button-row"><button class="outline" data-action="export-data">Export data</button><button class="outline" data-action="import-data">Import data</button></div></div><div class="spacer-18"></div>${section("ABOUT YOUR DATA")}${info("Your records stay private in this browser. Data leaves the device only when you export a backup or print a report.")}<div class="version">Attendance ${VERSION}</div>`;
   app.innerHTML=shell("Settings","Personalize Attendance and protect your records.",`${notice?info(notice):""}${tabs}${content}`); notice="";
 }
 function toggle(title,detail,key,checked) { return `<div class="card toggle-card"><div class="toggle-copy"><div class="toggle-title">${escapeHtml(title)}</div><div class="toggle-detail">${escapeHtml(detail)}</div></div><label class="switch"><input type="checkbox" data-setting="${key}" ${checked?"checked":""} aria-label="${escapeHtml(title)}"><span></span></label></div>`; }
+function attendanceButtonSettings() {
+  const target=settings.attendanceButtonTarget;
+  const targetChoice=settings.attendanceButtonMode==="ONE"?`<div class="setting-label">Colored button</div><div class="button-row"><button class="choice${target==="CALLED_OUT"?" active":""}" data-attendance-target="CALLED_OUT">Called Out</button><button class="choice${target==="TARDY"?" active":""}" data-attendance-target="TARDY">Tardy</button></div><div class="spacer-10"></div>`:"";
+  return `<div class="card"><div class="card-title">Choose which buttons stand out</div><div class="card-detail">Color both attendance buttons, or emphasize only one.</div><div class="spacer-10"></div><div class="setting-label">Button emphasis</div><div class="button-row"><button class="choice${settings.attendanceButtonMode==="BOTH"?" active":""}" data-attendance-mode="BOTH">Both</button><button class="choice${settings.attendanceButtonMode==="ONE"?" active":""}" data-attendance-mode="ONE">Only one</button></div><div class="spacer-10"></div>${targetChoice}<div class="inline-toggle"><div><div class="toggle-title">Use teal buttons</div><div class="toggle-detail">Off: red. On: teal.</div></div><label class="switch"><input type="checkbox" data-setting="attendanceButtonTeal" ${settings.attendanceButtonTeal?"checked":""} aria-label="Use teal buttons"><span></span></label></div></div>`;
+}
 function payPeriodCard() {
   let summary="";
   if (settings.payPeriodStart&&settings.payPeriodEnd) {
@@ -228,6 +237,8 @@ function bindActions() {
   document.querySelectorAll("[data-settings-tab]").forEach(el=>el.addEventListener("click",()=>{settingsCategory=el.dataset.settingsTab;render();}));
   document.querySelectorAll("[data-setting]").forEach(el=>el.addEventListener("change",()=>{settings[el.dataset.setting]=el.checked;saveSettings();render();}));
   document.querySelectorAll("[data-default]").forEach(el=>el.addEventListener("click",()=>{settings.defaultMode=el.dataset.default;saveSettings();render();}));
+  document.querySelectorAll("[data-attendance-mode]").forEach(el=>el.addEventListener("click",()=>{settings.attendanceButtonMode=el.dataset.attendanceMode;saveSettings();render();}));
+  document.querySelectorAll("[data-attendance-target]").forEach(el=>el.addEventListener("click",()=>{settings.attendanceButtonTarget=el.dataset.attendanceTarget;saveSettings();render();}));
   document.querySelector('[data-action="export-data"]')?.addEventListener("click",exportData);
   document.querySelector('[data-action="import-data"]')?.addEventListener("click",()=>fileInput.click());
   document.querySelectorAll("[data-export]").forEach(el=>el.addEventListener("click",()=>printReport(el.dataset.export)));
