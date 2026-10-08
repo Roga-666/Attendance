@@ -1,0 +1,26 @@
+name: Check web app
+
+on:
+  push:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-check.yml"
+  pull_request:
+    paths:
+      - "web/**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check JavaScript syntax
+        run: node --check web/app.js && node --check web/sw.js
+      - name: Verify required web files
+        run: test -s web/index.html && test -s web/styles.css && test -s web/manifest.webmanifest && test -s web/icons/icon-192.png && test -s web/icons/icon-512.png
