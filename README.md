@@ -29,7 +29,7 @@ The `web/` folder contains an installable progressive web app with the same atte
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.4.1.apk` to your Android phone.
+1. Copy `Attendance-v1.4.2.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 
