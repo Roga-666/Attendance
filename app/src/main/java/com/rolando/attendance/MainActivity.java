@@ -291,7 +291,7 @@ public final class MainActivity extends Activity {
         }
 
         LinearLayout actions = horizontal();
-        Button call = button("Called Out", NAVY, Color.WHITE);
+        Button call = button("Called Out", attendanceButtonColor("CALLED_OUT"), Color.WHITE);
         call.setOnClickListener(v -> {
             confirm("Mark called out?", "Save a call-out for " + SHORT_DATE.format(selectedTardyDate) + "?", () -> {
                 db.saveAttendance(selectedTardyDate, AttendanceDb.CALLED_OUT, 0);
@@ -299,7 +299,7 @@ public final class MainActivity extends Activity {
                 toast("Call-out saved"); showTardy();
             });
         });
-        Button tardy = button("Tardy", CORAL, Color.WHITE);
+        Button tardy = button("Tardy", attendanceButtonColor("TARDY"), Color.WHITE);
         tardy.setOnClickListener(v -> {
             int mins = trackLate ? readDuration(lateHours, lateMinutes) : 0;
             if (mins < 0) return;
@@ -395,6 +395,38 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("dark_mode", checked).apply(); recreate();
         }), lpMatchWrap(dp(18)));
 
+        body.addView(sectionTitle("ATTENDANCE BUTTONS"));
+        LinearLayout buttonCard = card();
+        buttonCard.addView(label("Choose which buttons stand out", 16, INK, true));
+        buttonCard.addView(label("Color both attendance buttons, or emphasize only one.", 13, MUTED, false), lpMatchWrap(dp(10)));
+        String buttonMode = prefs.getString("attendance_button_mode", "BOTH");
+        buttonCard.addView(label("Button emphasis", 12, MUTED, true), lpMatchWrap(dp(7)));
+        LinearLayout modeButtons = horizontal();
+        Button bothButtons = choiceButton("Both", "BOTH".equals(buttonMode));
+        Button oneButton = choiceButton("Only one", "ONE".equals(buttonMode));
+        bothButtons.setOnClickListener(v -> { prefs.edit().putString("attendance_button_mode", "BOTH").apply(); showSettings(); });
+        oneButton.setOnClickListener(v -> { prefs.edit().putString("attendance_button_mode", "ONE").apply(); showSettings(); });
+        modeButtons.addView(bothButtons, new LinearLayout.LayoutParams(0, dp(48), 1));
+        modeButtons.addView(gap(dp(10)));
+        modeButtons.addView(oneButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        buttonCard.addView(modeButtons, lpMatchWrap("ONE".equals(buttonMode) ? dp(10) : 0));
+        if ("ONE".equals(buttonMode)) {
+            String target = prefs.getString("attendance_button_target", "TARDY");
+            buttonCard.addView(label("Colored button", 12, MUTED, true), lpMatchWrap(dp(7)));
+            LinearLayout targetButtons = horizontal();
+            Button callTarget = choiceButton("Called Out", "CALLED_OUT".equals(target));
+            Button tardyTarget = choiceButton("Tardy", "TARDY".equals(target));
+            callTarget.setOnClickListener(v -> { prefs.edit().putString("attendance_button_target", "CALLED_OUT").apply(); showSettings(); });
+            tardyTarget.setOnClickListener(v -> { prefs.edit().putString("attendance_button_target", "TARDY").apply(); showSettings(); });
+            targetButtons.addView(callTarget, new LinearLayout.LayoutParams(0, dp(48), 1));
+            targetButtons.addView(gap(dp(10)));
+            targetButtons.addView(tardyTarget, new LinearLayout.LayoutParams(0, dp(48), 1));
+            buttonCard.addView(targetButtons);
+        }
+        body.addView(buttonCard, lpMatchWrap(dp(8)));
+        body.addView(toggleCard("Use teal buttons", "Off: red. On: teal.", prefs.getBoolean("attendance_button_teal", false),
+                (v, checked) -> prefs.edit().putBoolean("attendance_button_teal", checked).apply()), lpMatchWrap(dp(18)));
+
         body.addView(sectionTitle("DEFAULT OPENING SCREEN"));
         LinearLayout startCard = card();
         startCard.addView(label("Choose where Attendance opens", 16, INK, true), lpMatchWrap(dp(10)));
@@ -409,6 +441,14 @@ public final class MainActivity extends Activity {
         startButtons.addView(startHours, new LinearLayout.LayoutParams(0, dp(48), 1));
         startCard.addView(startButtons);
         body.addView(startCard, lpMatchWrap(dp(18)));
+    }
+
+    private int attendanceButtonColor(String target) {
+        String mode = prefs.getString("attendance_button_mode", "BOTH");
+        String selected = prefs.getString("attendance_button_target", "TARDY");
+        boolean colored = "BOTH".equals(mode) || target.equals(selected);
+        if (!colored) return NAVY;
+        return prefs.getBoolean("attendance_button_teal", false) ? TEAL : CORAL;
     }
 
     private void addTimeSettings(LinearLayout body) {
