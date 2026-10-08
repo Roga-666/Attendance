@@ -2,6 +2,8 @@
 
 Attendance is a private, offline Android app for keeping your own work-attendance record.
 
+The repository also contains a separate mobile-first web edition under [`web/`](web/). Android and web changes should be mirrored whenever the platform behavior makes sense, while keeping each implementation independent and easy to maintain.
+
 ## Included
 
 - **Tardy & call-out tracking** for today or any earlier date
@@ -20,6 +22,10 @@ Attendance is a private, offline Android app for keeping your own work-attendanc
 - Edge swipe or menu button to open the left-side navigation
 - App-logo shortcut to the selected default screen and consistent circular navigation icons
 - Private SQLite storage with no ads, analytics, or direct internet permission
+
+## Web edition and self-hosting
+
+The `web/` folder contains an installable progressive web app with the same attendance, hours, filters, settings, history, reports, and version 2 JSON backup format as Android. It stores records privately in the current browser. See [`web/README.md`](web/README.md) for the Docker Compose deployment and five-minute automatic GitHub update timer.
 
 ## Install the ready-made APK
 
