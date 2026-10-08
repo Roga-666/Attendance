@@ -2,6 +2,16 @@
 
 This folder contains the mobile-first web edition of Attendance. It is deliberately separate from the Android project under `app/`, while sharing the same repository and backup-file format.
 
+## Public GitHub Pages site
+
+The `Deploy web app to GitHub Pages` workflow publishes this folder whenever
+`web/` changes on the `main` branch. The public site is available at:
+
+`https://roga-666.github.io/Attendance/`
+
+GitHub serves the site over HTTPS. Each browser continues to keep its own
+attendance records locally; publishing the app does not publish user records.
+
 ## Feature parity
 
 - Tardy and call-out entry, summaries, filters, histories, editing, and deletion
