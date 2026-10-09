@@ -1,3 +1,5 @@
+name: attendance
+
 services:
   attendance-web:
     image: nginx:1.27-alpine
