@@ -1,4 +1,4 @@
-const CACHE = "attendance-web-v2";
+const CACHE = "attendance-web-v3";
 const CORE = ["./", "index.html", "styles.css", "app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", event => {

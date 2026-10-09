@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "1.4.2-web.1";
+const VERSION = "1.4.2-web.2";
 const STORAGE_KEY = "attendance-web-data-v2";
 const SETTINGS_KEY = "attendance-web-settings-v1";
 const TARDY = "Tardy";
@@ -106,7 +106,7 @@ function renderTardy() {
   app.innerHTML = shell("Tardy & Call-Outs","Record a tardy or call-out for today—or choose an earlier date.",body);
 }
 function tardyFilters() {
-  const monthLabel = tardyFilter==="month" ? new Intl.DateTimeFormat("en-US",{month:"short",year:"numeric"}).format(parseDate(`${selectedMonth}-01`)) : "Month";
+  const monthLabel = tardyFilter==="month" ? new Intl.DateTimeFormat("en-US",{month:"long"}).format(parseDate(`${selectedMonth}-01`)) : "Month";
   const yearLabel = tardyFilter==="year" ? String(selectedYear) : "Year";
   return filterButton("Last 30 days","days30",tardyFilter==="days30")+filterButton(`${monthLabel} ▾`,"month",tardyFilter==="month")+filterButton(`${yearLabel} ▾`,"year",tardyFilter==="year")+filterButton("All time","all",tardyFilter==="all");
 }
@@ -281,10 +281,16 @@ function printReport(kind) {
   let title,filter,range,entries,headers,rows,summary;
   if(kind==="hours"){range=hoursRange(hoursFilter);entries=hoursBetween(...range);title="Hours worked report";filter=hoursFilterLabel(hoursFilter);const total=entries.reduce((s,e)=>s+e.minutes,0);summary=`${formatHours(total)} total`;headers=["Date","Hours worked"];rows=entries.map(e=>[reportDate(e.date),formatHours(e.minutes)]);}
   else {range=tardyRange();entries=attendanceBetween(...range);if(kind==="history")entries=entries.filter(e=>e.type===historyType);title="Tardy & call-out report";filter=(kind==="history"?(historyType===TARDY?"Tardies • ":"Call-Outs • "):"")+tardyFilterLabel();const tardies=entries.filter(e=>e.type===TARDY),calls=entries.filter(e=>e.type===CALLED_OUT),late=tardies.reduce((s,e)=>s+e.lateMinutes,0);summary=`${tardies.length} tardies • ${calls.length} call-outs${late?` • ${duration(late)} total late`:""}`;headers=["Date","Status","Late by"];rows=entries.map(e=>[reportDate(e.date),e.type,e.type===TARDY&&e.lateMinutes?`${duration(e.lateMinutes)} late`:"—"]);}
-  const report=`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>@page{margin:.55in}*{box-sizing:border-box}body{font:14px system-ui;margin:0;color:#232d3a}header{background:#101c2c;color:white;padding:24px 28px}h1{margin:0 0 8px;font-size:24px}.meta{color:#cde1e2;font-size:12px}.summary{margin-top:12px;font-weight:700}table{width:100%;border-collapse:collapse;margin-top:24px}th{background:#009688;color:white;text-align:left;padding:9px}td{padding:10px 9px;border-bottom:1px solid #dde3e9}tr:nth-child(even){background:#f5f7fa}.empty{padding:24px 9px;color:#667484}footer{margin-top:28px;color:#777;font-size:10px}</style></head><body><header><h1>${escapeHtml(title)}</h1><div class="meta">${escapeHtml(filter)} • ${escapeHtml(reportDate(range[0]))} – ${escapeHtml(reportDate(range[1]))}</div><div class="summary">${escapeHtml(summary)}</div></header><table><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join(""):`<tr><td class="empty" colspan="${headers.length}">No records in this date range.</td></tr>`}</tbody></table><footer>Created by Attendance on ${escapeHtml(reportDate(today()))}</footer><script>window.onload=()=>window.print()<\/script></body></html>`;
-  const popup=window.open("","_blank");if(!popup){toast("Allow pop-ups to export a PDF");return;}popup.document.write(report);popup.document.close();
+  document.querySelector(".print-report")?.remove();
+  const report=document.createElement("section");
+  report.className="print-report";
+  report.innerHTML=`<header class="print-header"><h1>${escapeHtml(title)}</h1><div class="print-meta">${escapeHtml(filter)} • ${escapeHtml(reportDate(range[0]))} – ${escapeHtml(reportDate(range[1]))}</div><div class="print-summary">${escapeHtml(summary)}</div></header><table class="print-table"><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join(""):`<tr><td class="print-empty" colspan="${headers.length}">No records in this date range.</td></tr>`}</tbody></table><footer class="print-footer">Created by Attendance on ${escapeHtml(reportDate(today()))}</footer>`;
+  document.body.append(report);
+  document.body.classList.add("printing-report");
+  window.addEventListener("afterprint",()=>{report.remove();document.body.classList.remove("printing-report");},{once:true});
+  window.print();
 }
-function tardyFilterLabel(){if(tardyFilter==="days30")return "Last 30 days";if(tardyFilter==="month")return new Intl.DateTimeFormat("en-US",{month:"short",year:"numeric"}).format(parseDate(`${selectedMonth}-01`));if(tardyFilter==="year")return String(selectedYear);return "All time";}
+function tardyFilterLabel(){if(tardyFilter==="days30")return "Last 30 days";if(tardyFilter==="month")return new Intl.DateTimeFormat("en-US",{month:"long"}).format(parseDate(`${selectedMonth}-01`));if(tardyFilter==="year")return String(selectedYear);return "All time";}
 
 function showDialog(title,body,confirmLabel,onConfirm) {
   const dialog=document.createElement("dialog");dialog.innerHTML=`<form method="dialog" class="dialog-body"><h2>${escapeHtml(title)}</h2>${body}<div class="dialog-actions"><button class="outline" value="cancel">Cancel</button><button class="primary" id="dialog-confirm" value="confirm">${escapeHtml(confirmLabel)}</button></div></form>`;document.body.append(dialog);dialog.addEventListener("close",()=>dialog.remove());dialog.querySelector("#dialog-confirm").addEventListener("click",event=>{event.preventDefault();const result=onConfirm();if(result!==false)dialog.close();});dialog.showModal();

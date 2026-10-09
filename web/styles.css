@@ -98,11 +98,23 @@ dialog::backdrop { background:rgba(0,0,0,.55); }
 #toast { position:fixed; z-index:100; left:50%; bottom:max(24px, env(safe-area-inset-bottom)); max-width:calc(100vw - 36px); padding:11px 16px; border-radius:20px; color:#fff; background:#243242; opacity:0; transform:translate(-50%, 14px); pointer-events:none; transition:.2s; text-align:center; font-size:13px; box-shadow:0 5px 20px rgba(0,0,0,.25); }
 #toast.show { opacity:1; transform:translate(-50%, 0); }
 .version { color:var(--muted); font-size:12px; margin-top:14px; }
+.print-report { display:none; }
 @media (min-width:760px) {
   .page { padding-left:28px; padding-right:28px; }
   .filter-scroll { margin-left:0; margin-right:0; padding-left:0; padding-right:0; }
 }
 @media print {
-  .toolbar, .drawer, .drawer-scrim, #toast { display:none !important; }
-  .page { width:100%; max-width:none; padding:0; }
+  @page { margin:.55in; }
+  body.printing-report > :not(.print-report) { display:none !important; }
+  .print-report { display:block !important; color:#232d3a; background:#fff; font:14px system-ui, sans-serif; }
+  .print-header { padding:24px 28px; color:#fff; background:#101c2c; }
+  .print-header h1 { margin:0 0 8px; font-size:24px; }
+  .print-meta { color:#cde1e2; font-size:12px; }
+  .print-summary { margin-top:12px; font-weight:700; }
+  .print-table { width:100%; margin-top:24px; border-collapse:collapse; }
+  .print-table th { padding:9px; color:#fff; background:#009688; text-align:left; }
+  .print-table td { padding:10px 9px; border-bottom:1px solid #dde3e9; }
+  .print-table tr:nth-child(even) { background:#f5f7fa; }
+  .print-empty { padding:24px 9px !important; color:#667484; }
+  .print-footer { margin-top:28px; color:#777; font-size:10px; }
 }
