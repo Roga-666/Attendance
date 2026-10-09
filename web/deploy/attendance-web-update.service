@@ -2,6 +2,7 @@
 Description=Update Attendance web app from GitHub
 Wants=network-online.target
 After=network-online.target docker.service
+Requires=docker.service
 
 [Service]
 Type=oneshot
@@ -9,4 +10,4 @@ User=rolando
 Group=rolando
 WorkingDirectory=/home/rolando/Portainer/Attendance
 ExecStart=/usr/bin/git pull --ff-only origin main
-ExecStartPost=/usr/bin/docker compose -f web/compose.yaml up -d --remove-orphans
+ExecStartPost=/usr/bin/docker compose -p attendance -f web/compose.yaml up -d
