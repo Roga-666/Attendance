@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "1.4.2-web.2";
+const VERSION = "1.5.0-web.1";
 const STORAGE_KEY = "attendance-web-data-v2";
 const SETTINGS_KEY = "attendance-web-settings-v1";
 const TARDY = "Tardy";
@@ -30,7 +30,7 @@ function loadData() {
 }
 function emptyData() { return { attendance: {}, hours: {}, deleted: {} }; }
 function loadSettings() {
-  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"", attendanceButtonMode:"BOTH", attendanceButtonTarget:"TARDY", attendanceButtonTeal:false };
+  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"", attendanceButtonMode:"BOTH", attendanceButtonTarget:"TARDY", attendanceButtonTeal:false, lunchDuration:30, lunch24Hour:false, lunchStartTime:"" };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; }
   catch { return defaults; }
 }
@@ -68,6 +68,7 @@ function drawer() {
     <button class="brand" data-action="default-view" style="border:0;background:transparent;color:inherit;text-align:left;padding:0"><img src="icons/icon-192.png" alt=""><span><span class="brand-name">Attendance</span><span class="brand-tag">Keep your own record.</span></span></button>
     <button class="nav-button" data-view="tardy"><span class="nav-icon">!</span>Tardy &amp; Call-Outs</button>
     <button class="nav-button" data-view="hours"><span class="nav-icon">◷</span>Hours</button>
+    <button class="nav-button" data-view="lunch"><span class="nav-icon">☕</span>Lunch</button>
     <span class="nav-spacer"></span>
     <button class="nav-button" data-view="settings"><span class="nav-icon">⚙</span>Settings</button>
   </aside>`;
@@ -84,6 +85,7 @@ function render() {
   applyTheme();
   if (view === "tardy") renderTardy();
   else if (view === "hours") renderHours();
+  else if (view === "lunch") renderLunch();
   else if (view === "history") renderHistory();
   else renderSettings();
   bindCommon();
@@ -150,6 +152,30 @@ function hoursRange(key) {
 }
 function validPayPeriod() { return settings.payPeriodStart&&settings.payPeriodEnd&&settings.payPeriodEnd>=settings.payPeriodStart; }
 function hoursBetween(from,to) { return Object.values(state.hours).filter(e=>e.date>=from&&e.date<=to).sort(byDateDesc); }
+
+function renderLunch() {
+  const start=timeToMinutes(settings.lunchStartTime);
+  const hasStart=start!==null;
+  const returnTotal=hasStart?start+settings.lunchDuration:0;
+  const body=`${section("LUNCH START")}
+    <div class="card lunch-time-card"><div class="lunch-time${hasStart?"":" muted"}">${hasStart?escapeHtml(formatClock(start)):"No lunch time recorded"}</div><div class="card-detail">${hasStart?"Recorded lunch departure":"Use the current time or choose it manually."}</div></div>
+    <div class="spacer-10"></div><div class="button-row"><button class="primary" data-action="lunch-now">Use current time</button><button class="outline" data-action="pick-lunch-time">Enter manually</button></div>
+    <input id="lunch-time" type="time" value="${escapeHtml(settings.lunchStartTime)}" hidden>
+    <div class="spacer-18"></div>${section("CLOCK BACK IN")}
+    <div class="card lunch-result"><div class="lunch-return">${hasStart?escapeHtml(formatClock(returnTotal%1440)):"—"}</div><div class="card-detail">${hasStart?`After a ${settings.lunchDuration}-minute lunch${returnTotal>=1440?" • next day":""}`:"Record a lunch start time to calculate your return."}</div></div>
+    <div class="lunch-settings-spacer"></div><button class="outline full" data-action="lunch-settings">Lunch settings</button>`;
+  app.innerHTML=shell("Lunch","Record when lunch starts and see exactly when to clock back in.",body);
+}
+function timeToMinutes(value) { if(!/^\d{2}:\d{2}$/.test(value||""))return null;const [h,m]=value.split(":").map(Number);return h*60+m; }
+function minutesToTime(minutes) { return `${String(Math.floor(minutes/60)%24).padStart(2,"0")}:${String(minutes%60).padStart(2,"0")}`; }
+function formatClock(minutes) { const h=Math.floor(minutes/60)%24,m=minutes%60;if(settings.lunch24Hour)return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return `${h%12||12}:${String(m).padStart(2,"0")} ${h<12?"AM":"PM"}`; }
+function openLunchSettings() {
+  showDialog("Lunch settings",`<label class="setting-label" for="lunch-duration">Lunch duration in minutes</label><input class="field" id="lunch-duration" type="number" inputmode="numeric" min="1" max="240" value="${settings.lunchDuration}"><div class="spacer-18"></div><div class="inline-toggle"><div><div class="toggle-title">Use 24-hour clock</div><div class="toggle-detail">Off: 1:30 PM. On: 13:30.</div></div><label class="switch"><input id="lunch-24-hour" type="checkbox" ${settings.lunch24Hour?"checked":""} aria-label="Use 24-hour clock"><span></span></label></div>`,"Save",()=>{
+    const duration=Number(document.querySelector("#lunch-duration").value);
+    if(!Number.isInteger(duration)||duration<1||duration>240){toast("Lunch duration must be between 1 and 240 minutes");return false;}
+    settings.lunchDuration=duration;settings.lunch24Hour=document.querySelector("#lunch-24-hour").checked;saveSettings();render();
+  });
+}
 
 function renderHistory() {
   const [from,to]=tardyRange();
@@ -228,6 +254,10 @@ function bindActions() {
   document.querySelector('[data-action="called-out"]')?.addEventListener("click",()=>showConfirm("Mark called out?",`Save a call-out for ${shortDate(selectedTardyDate)}?`,()=>saveAttendance(CALLED_OUT,0)));
   document.querySelector('[data-action="tardy"]')?.addEventListener("click",()=>{const mins=readLateMinutes();if(mins!==null)saveAttendance(TARDY,mins);});
   document.querySelector('[data-action="save-hours"]')?.addEventListener("click",saveHours);
+  document.querySelector('[data-action="lunch-now"]')?.addEventListener("click",()=>{const now=new Date();settings.lunchStartTime=minutesToTime(now.getHours()*60+now.getMinutes());saveSettings();render();});
+  document.querySelector('[data-action="pick-lunch-time"]')?.addEventListener("click",()=>{const picker=document.querySelector("#lunch-time");picker.showPicker?picker.showPicker():picker.click();});
+  document.querySelector("#lunch-time")?.addEventListener("change",event=>{settings.lunchStartTime=event.target.value;saveSettings();render();});
+  document.querySelector('[data-action="lunch-settings"]')?.addEventListener("click",openLunchSettings);
   document.querySelectorAll("[data-history]").forEach(el=>el.addEventListener("click",()=>{historyType=el.dataset.history;view="history";render();}));
   document.querySelectorAll("[data-history-tab]").forEach(el=>el.addEventListener("click",()=>{historyType=el.dataset.historyTab;render();}));
   document.querySelectorAll("[data-edit-attendance]").forEach(el=>el.addEventListener("click",()=>editAttendance(el.dataset.editAttendance)));
@@ -284,7 +314,7 @@ function printReport(kind) {
   document.querySelector(".print-report")?.remove();
   const report=document.createElement("section");
   report.className="print-report";
-  report.innerHTML=`<header class="print-header"><h1>${escapeHtml(title)}</h1><div class="print-meta">${escapeHtml(filter)} • ${escapeHtml(reportDate(range[0]))} – ${escapeHtml(reportDate(range[1]))}</div><div class="print-summary">${escapeHtml(summary)}</div></header><table class="print-table"><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join(""):`<tr><td class="print-empty" colspan="${headers.length}">No records in this date range.</td></tr>`}</tbody></table><footer class="print-footer">Created by Attendance on ${escapeHtml(reportDate(today()))}</footer>`;
+  report.innerHTML=`<header class="print-header"><div class="print-brand">ATTENDANCE</div><h1>${escapeHtml(title)}</h1><div class="print-meta">${escapeHtml(filter)}<span></span>${escapeHtml(reportDate(range[0]))} – ${escapeHtml(reportDate(range[1]))}</div><div class="print-summary">${escapeHtml(summary)}</div></header><table class="print-table"><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(v=>`<td>${escapeHtml(v)}</td>`).join("")}</tr>`).join(""):`<tr><td class="print-empty" colspan="${headers.length}">No records in this date range.</td></tr>`}</tbody></table>`;
   document.body.append(report);
   document.body.classList.add("printing-report");
   window.addEventListener("afterprint",()=>{report.remove();document.body.classList.remove("printing-report");},{once:true});
