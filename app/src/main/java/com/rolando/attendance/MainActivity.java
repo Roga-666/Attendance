@@ -3,6 +3,7 @@ package com.rolando.attendance;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.app.TimePickerDialog;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -35,6 +36,7 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
@@ -57,7 +59,7 @@ public final class MainActivity extends Activity {
     private static final int DRIVE_CREATE = 403;
     private static final int DRIVE_OPEN = 404;
 
-    private enum Mode { TARDY, HOURS, SETTINGS }
+    private enum Mode { TARDY, HOURS, LUNCH, SETTINGS }
     private enum Filter {
         DAYS_30("Last 30 days"), MONTH("This month"), YEAR("This year"), ALL("All time");
         final String label;
@@ -157,6 +159,7 @@ public final class MainActivity extends Activity {
         drawer.addView(brand, lpMatchWrap(dp(26)));
         drawer.addView(navButton("!", "Tardy & Call-Outs", () -> { mode = Mode.TARDY; activeAttendanceHistoryType = null; closeDrawer(); showTardy(); }));
         drawer.addView(navButton("◷", "Hours", () -> { mode = Mode.HOURS; closeDrawer(); showHours(); }));
+        drawer.addView(navButton("☕", "Lunch", () -> { mode = Mode.LUNCH; closeDrawer(); showLunch(); }));
         Space space = new Space(this);
         drawer.addView(space, new LinearLayout.LayoutParams(1, 0, 1));
         drawer.addView(navButton("⚙", "Settings", () -> { mode = Mode.SETTINGS; closeDrawer(); showSettings(); }));
@@ -363,6 +366,99 @@ public final class MainActivity extends Activity {
         body.addView(export, lpMatch(dp(56), dp(4)));
     }
 
+    private void showLunch() {
+        LinearLayout body = page("Lunch", "Record when lunch starts and see exactly when to clock back in.");
+        int duration = prefs.getInt("lunch_duration", 30);
+        int startMinutes = prefs.getInt("lunch_start_minutes", -1);
+
+        body.addView(sectionTitle("LUNCH START"));
+        LinearLayout startCard = card();
+        startCard.addView(label(startMinutes < 0 ? "No lunch time recorded" : formatLunchTime(startMinutes), startMinutes < 0 ? 18 : 32, startMinutes < 0 ? MUTED : TEAL, true));
+        startCard.addView(label(startMinutes < 0 ? "Use the current time or choose it manually." : "Recorded lunch departure", 13, MUTED, false));
+        body.addView(startCard, lpMatchWrap(dp(12)));
+
+        LinearLayout actions = horizontal();
+        Button now = button("Use current time", TEAL, Color.WHITE);
+        now.setOnClickListener(v -> {
+            LocalTime time = LocalTime.now();
+            prefs.edit().putInt("lunch_start_minutes", time.getHour() * 60 + time.getMinute()).apply();
+            showLunch();
+        });
+        Button manual = outlineButton("Enter manually");
+        manual.setOnClickListener(v -> pickLunchTime(startMinutes));
+        actions.addView(now, new LinearLayout.LayoutParams(0, dp(56), 1));
+        actions.addView(gap(dp(10)));
+        actions.addView(manual, new LinearLayout.LayoutParams(0, dp(56), 1));
+        body.addView(actions, lpMatchWrap(dp(20)));
+
+        body.addView(sectionTitle("CLOCK BACK IN"));
+        LinearLayout result = card();
+        if (startMinutes < 0) {
+            result.addView(label("—", 34, MUTED, true));
+            result.addView(label("Record a lunch start time to calculate your return.", 13, MUTED, false));
+        } else {
+            int returnTotal = startMinutes + duration;
+            result.addView(label(formatLunchTime(returnTotal % 1440), 38, TEAL, true));
+            result.addView(label("After a " + duration + "-minute lunch" + (returnTotal >= 1440 ? " • next day" : ""), 13, MUTED, false));
+        }
+        body.addView(result, lpMatchWrap(dp(24)));
+
+        Space flexible = new Space(this);
+        body.addView(flexible, new LinearLayout.LayoutParams(1, dp(24)));
+        Button settingsButton = outlineButton("Lunch settings");
+        settingsButton.setOnClickListener(v -> showLunchSettings());
+        body.addView(settingsButton, lpMatch(dp(56), dp(4)));
+    }
+
+    private void pickLunchTime(int savedMinutes) {
+        LocalTime now = LocalTime.now();
+        int hour = savedMinutes >= 0 ? savedMinutes / 60 : now.getHour();
+        int minute = savedMinutes >= 0 ? savedMinutes % 60 : now.getMinute();
+        boolean use24Hour = prefs.getBoolean("lunch_24_hour", false);
+        new TimePickerDialog(this, (view, selectedHour, selectedMinute) -> {
+            prefs.edit().putInt("lunch_start_minutes", selectedHour * 60 + selectedMinute).apply();
+            showLunch();
+        }, hour, minute, use24Hour).show();
+    }
+
+    private void showLunchSettings() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+        form.addView(label("Lunch duration in minutes", 13, MUTED, true), lpMatchWrap(dp(7)));
+        EditText duration = numberField("Minutes", 3);
+        duration.setText(String.valueOf(prefs.getInt("lunch_duration", 30)));
+        form.addView(duration, lpMatch(dp(54), dp(14)));
+        Switch clockFormat = new Switch(this);
+        clockFormat.setText("Use 24-hour clock");
+        clockFormat.setTextColor(INK);
+        clockFormat.setChecked(prefs.getBoolean("lunch_24_hour", false));
+        form.addView(clockFormat, lpMatchWrap(0));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Lunch settings")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", null)
+                .create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            int minutes;
+            try { minutes = Integer.parseInt(duration.getText().toString()); }
+            catch (NumberFormatException e) { toast("Enter a lunch duration"); return; }
+            if (minutes < 1 || minutes > 240) { toast("Lunch duration must be between 1 and 240 minutes"); return; }
+            prefs.edit().putInt("lunch_duration", minutes).putBoolean("lunch_24_hour", clockFormat.isChecked()).apply();
+            dialog.dismiss();
+            showLunch();
+        }));
+        dialog.show();
+    }
+
+    private String formatLunchTime(int minutes) {
+        LocalTime time = LocalTime.of((minutes / 60) % 24, minutes % 60);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern(prefs.getBoolean("lunch_24_hour", false) ? "HH:mm" : "h:mm a", Locale.US);
+        return formatter.format(time);
+    }
+
     private void showSettings() {
         LinearLayout body = page("Settings", "Personalize Attendance and protect your records.");
         if (settingsNotice != null) {
@@ -534,7 +630,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        body.addView(label("Attendance 1.4.1", 12, MUTED, false), lpMatchWrap(dp(16)));
+        body.addView(label("Attendance 1.5.0", 12, MUTED, false), lpMatchWrap(dp(16)));
     }
 
     private void showAttendanceHistory(String type) {
@@ -756,6 +852,7 @@ public final class MainActivity extends Activity {
         if (mode == Mode.TARDY && activeAttendanceHistoryType != null) showAttendanceHistory(activeAttendanceHistoryType);
         else if (mode == Mode.TARDY) showTardy();
         else if (mode == Mode.HOURS) showHours();
+        else if (mode == Mode.LUNCH) showLunch();
         else showSettings();
     }
 
