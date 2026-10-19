@@ -3,7 +3,6 @@ package com.rolando.attendance;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
-import android.app.TimePickerDialog;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -20,6 +19,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.ArrayAdapter;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -30,6 +30,7 @@ import android.widget.LinearLayout;
 import android.widget.NumberPicker;
 import android.widget.ScrollView;
 import android.widget.Space;
+import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -370,18 +371,28 @@ public final class MainActivity extends Activity {
         LinearLayout body = page("Lunch", "Record when lunch starts and see exactly when to clock back in.");
         int duration = prefs.getInt("lunch_duration", 30);
         int startMinutes = prefs.getInt("lunch_start_minutes", -1);
+        LocalDate lunchDate = savedLunchDate();
 
         body.addView(sectionTitle("LUNCH START"));
         LinearLayout startCard = card();
         startCard.addView(label(startMinutes < 0 ? "No lunch time recorded" : formatLunchTime(startMinutes), startMinutes < 0 ? 18 : 32, startMinutes < 0 ? MUTED : TEAL, true));
         startCard.addView(label(startMinutes < 0 ? "Use the current time or choose it manually." : "Recorded lunch departure", 13, MUTED, false));
+        if (startMinutes >= 0) {
+            boolean datedToday = LocalDate.now().equals(lunchDate);
+            String dateText = lunchDate == null
+                    ? "Date not recorded • record this lunch again"
+                    : (datedToday ? "Logged today • " : "Older entry • ") + FULL_DATE.format(lunchDate);
+            TextView dateLabel = label(dateText, 12, datedToday ? MUTED : CORAL, !datedToday);
+            dateLabel.setPadding(0, dp(7), 0, 0);
+            startCard.addView(dateLabel);
+        }
         body.addView(startCard, lpMatchWrap(dp(12)));
 
         LinearLayout actions = horizontal();
         Button now = button("Use current time", TEAL, Color.WHITE);
         now.setOnClickListener(v -> {
             LocalTime time = LocalTime.now();
-            prefs.edit().putInt("lunch_start_minutes", time.getHour() * 60 + time.getMinute()).apply();
+            prefs.edit().putInt("lunch_start_minutes", time.getHour() * 60 + time.getMinute()).putString("lunch_start_date", LocalDate.now().toString()).apply();
             showLunch();
         });
         Button manual = outlineButton("Enter manually");
@@ -398,8 +409,11 @@ public final class MainActivity extends Activity {
             result.addView(label("Record a lunch start time to calculate your return.", 13, MUTED, false));
         } else {
             int returnTotal = startMinutes + duration;
-            result.addView(label(formatLunchTime(returnTotal % 1440), 38, TEAL, true));
-            result.addView(label("After a " + duration + "-minute lunch" + (returnTotal >= 1440 ? " • next day" : ""), 13, MUTED, false));
+            boolean datedToday = LocalDate.now().equals(lunchDate);
+            result.addView(label(formatLunchTime(returnTotal % 1440), 38, datedToday ? TEAL : CORAL, true));
+            String returnDetail = "After a " + duration + "-minute lunch" + (returnTotal >= 1440 ? " • next day" : "");
+            if (!datedToday) returnDetail += lunchDate == null ? " • date unknown" : " • from " + SHORT_DATE.format(lunchDate);
+            result.addView(label(returnDetail, 13, datedToday ? MUTED : CORAL, !datedToday));
         }
         body.addView(result, lpMatchWrap(dp(24)));
 
@@ -412,13 +426,66 @@ public final class MainActivity extends Activity {
 
     private void pickLunchTime(int savedMinutes) {
         LocalTime now = LocalTime.now();
-        int hour = savedMinutes >= 0 ? savedMinutes / 60 : now.getHour();
-        int minute = savedMinutes >= 0 ? savedMinutes % 60 : now.getMinute();
+        boolean savedToday = LocalDate.now().equals(savedLunchDate());
+        int hour = savedMinutes >= 0 && savedToday ? savedMinutes / 60 : now.getHour();
+        int minute = savedMinutes >= 0 && savedToday ? savedMinutes % 60 : now.getMinute();
         boolean use24Hour = prefs.getBoolean("lunch_24_hour", false);
-        new TimePickerDialog(this, (view, selectedHour, selectedMinute) -> {
-            prefs.edit().putInt("lunch_start_minutes", selectedHour * 60 + selectedMinute).apply();
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+        form.addView(label("Logging for " + FULL_DATE.format(LocalDate.now()), 13, MUTED, false), lpMatchWrap(dp(12)));
+        LinearLayout timeRow = horizontal();
+        EditText hourField = numberField(use24Hour ? "Hour (0–23)" : "Hour (1–12)", 2);
+        EditText minuteField = numberField("Minute", 2);
+        int shownHour = use24Hour ? hour : (hour % 12 == 0 ? 12 : hour % 12);
+        hourField.setText(String.valueOf(shownHour));
+        minuteField.setText(String.format(Locale.US, "%02d", minute));
+        timeRow.addView(hourField, new LinearLayout.LayoutParams(0, dp(56), 1));
+        timeRow.addView(gap(dp(8)));
+        timeRow.addView(minuteField, new LinearLayout.LayoutParams(0, dp(56), 1));
+        Spinner period = null;
+        if (!use24Hour) {
+            timeRow.addView(gap(dp(8)));
+            period = new Spinner(this);
+            period.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"AM", "PM"}));
+            period.setSelection(hour >= 12 ? 1 : 0);
+            period.setBackground(bordered(CARD_COLOR, BORDER, 14));
+            timeRow.addView(period, new LinearLayout.LayoutParams(dp(82), dp(56)));
+        }
+        form.addView(timeRow);
+
+        Spinner finalPeriod = period;
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Enter lunch start time")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Use time", null)
+                .create();
+        dialog.setOnShowListener(v -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            int enteredHour, enteredMinute;
+            try {
+                enteredHour = Integer.parseInt(hourField.getText().toString());
+                enteredMinute = Integer.parseInt(minuteField.getText().toString());
+            } catch (NumberFormatException e) { toast("Enter a valid hour and minute"); return; }
+            if (enteredMinute < 0 || enteredMinute > 59 || (use24Hour && (enteredHour < 0 || enteredHour > 23)) || (!use24Hour && (enteredHour < 1 || enteredHour > 12))) {
+                toast(use24Hour ? "Enter an hour from 0 to 23 and minutes from 0 to 59" : "Enter an hour from 1 to 12 and minutes from 0 to 59");
+                return;
+            }
+            int selectedHour = enteredHour;
+            if (!use24Hour) selectedHour = enteredHour % 12 + (finalPeriod.getSelectedItemPosition() == 1 ? 12 : 0);
+            prefs.edit().putInt("lunch_start_minutes", selectedHour * 60 + enteredMinute).putString("lunch_start_date", LocalDate.now().toString()).apply();
+            dialog.dismiss();
             showLunch();
-        }, hour, minute, use24Hour).show();
+        }));
+        dialog.show();
+    }
+
+    private LocalDate savedLunchDate() {
+        String value = prefs.getString("lunch_start_date", null);
+        if (value == null) return null;
+        try { return LocalDate.parse(value); }
+        catch (RuntimeException ignored) { return null; }
     }
 
     private void showLunchSettings() {
@@ -630,7 +697,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        body.addView(label("Attendance 1.5.0", 12, MUTED, false), lpMatchWrap(dp(16)));
+        body.addView(label("Attendance 1.5.1", 12, MUTED, false), lpMatchWrap(dp(16)));
     }
 
     private void showAttendanceHistory(String type) {
