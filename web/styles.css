@@ -101,8 +101,16 @@ dialog::backdrop { background:rgba(0,0,0,.55); }
 .lunch-time-card, .lunch-result { text-align:center; padding:24px 18px; }
 .lunch-time { color:var(--teal); font-size:32px; line-height:1.15; font-weight:850; }
 .lunch-time.muted { color:var(--muted); font-size:18px; }
+.lunch-date { margin-top:7px; color:var(--muted); font-size:12px; }
+.lunch-date.stale { color:var(--coral); font-weight:750; }
 .lunch-return { color:var(--teal); font-size:clamp(38px, 12vw, 54px); line-height:1.1; font-weight:850; letter-spacing:-.03em; }
+.lunch-return.stale, .lunch-result .card-detail.stale { color:var(--coral); font-weight:750; }
 .lunch-settings-spacer { min-height:42px; }
+.manual-time-row { display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end; }
+.manual-time-row label { min-width:0; }
+.manual-time-row .setting-label { display:block; }
+.manual-time-period { width:92px; }
+.manual-time-period select { height:58px; }
 .print-report { display:none; }
 @media (min-width:760px) {
   .page { padding-left:28px; padding-right:28px; }
