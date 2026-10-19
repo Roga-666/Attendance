@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "1.5.0-web.1";
+const VERSION = "1.5.1-web.1";
 const STORAGE_KEY = "attendance-web-data-v2";
 const SETTINGS_KEY = "attendance-web-settings-v1";
 const TARDY = "Tardy";
@@ -30,7 +30,7 @@ function loadData() {
 }
 function emptyData() { return { attendance: {}, hours: {}, deleted: {} }; }
 function loadSettings() {
-  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"", attendanceButtonMode:"BOTH", attendanceButtonTarget:"TARDY", attendanceButtonTeal:false, lunchDuration:30, lunch24Hour:false, lunchStartTime:"" };
+  const defaults = { darkMode:false, defaultMode:"TARDY", trackLateMinutes:false, decimalHours:true, payPeriodStart:"", payPeriodEnd:"", attendanceButtonMode:"BOTH", attendanceButtonTarget:"TARDY", attendanceButtonTeal:false, lunchDuration:30, lunch24Hour:false, lunchStartTime:"", lunchStartDate:"" };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; }
   catch { return defaults; }
 }
@@ -157,18 +157,35 @@ function renderLunch() {
   const start=timeToMinutes(settings.lunchStartTime);
   const hasStart=start!==null;
   const returnTotal=hasStart?start+settings.lunchDuration:0;
+  const datedToday=settings.lunchStartDate===today();
+  const dateLine=!hasStart?"":settings.lunchStartDate?`${datedToday?"Logged today":"Older entry"} • ${fullDate(settings.lunchStartDate)}`:"Date not recorded • record this lunch again";
   const body=`${section("LUNCH START")}
-    <div class="card lunch-time-card"><div class="lunch-time${hasStart?"":" muted"}">${hasStart?escapeHtml(formatClock(start)):"No lunch time recorded"}</div><div class="card-detail">${hasStart?"Recorded lunch departure":"Use the current time or choose it manually."}</div></div>
+    <div class="card lunch-time-card"><div class="lunch-time${hasStart?"":" muted"}">${hasStart?escapeHtml(formatClock(start)):"No lunch time recorded"}</div><div class="card-detail">${hasStart?"Recorded lunch departure":"Use the current time or choose it manually."}</div>${hasStart?`<div class="lunch-date${datedToday?"":" stale"}">${escapeHtml(dateLine)}</div>`:""}</div>
     <div class="spacer-10"></div><div class="button-row"><button class="primary" data-action="lunch-now">Use current time</button><button class="outline" data-action="pick-lunch-time">Enter manually</button></div>
-    <input id="lunch-time" type="time" value="${escapeHtml(settings.lunchStartTime)}" hidden>
     <div class="spacer-18"></div>${section("CLOCK BACK IN")}
-    <div class="card lunch-result"><div class="lunch-return">${hasStart?escapeHtml(formatClock(returnTotal%1440)):"—"}</div><div class="card-detail">${hasStart?`After a ${settings.lunchDuration}-minute lunch${returnTotal>=1440?" • next day":""}`:"Record a lunch start time to calculate your return."}</div></div>
+    <div class="card lunch-result"><div class="lunch-return${hasStart&&!datedToday?" stale":""}">${hasStart?escapeHtml(formatClock(returnTotal%1440)):"—"}</div><div class="card-detail${hasStart&&!datedToday?" stale":""}">${hasStart?`After a ${settings.lunchDuration}-minute lunch${returnTotal>=1440?" • next day":""}${!datedToday?settings.lunchStartDate?` • from ${shortDate(settings.lunchStartDate)}`:" • date unknown":""}`:"Record a lunch start time to calculate your return."}</div></div>
     <div class="lunch-settings-spacer"></div><button class="outline full" data-action="lunch-settings">Lunch settings</button>`;
   app.innerHTML=shell("Lunch","Record when lunch starts and see exactly when to clock back in.",body);
 }
 function timeToMinutes(value) { if(!/^\d{2}:\d{2}$/.test(value||""))return null;const [h,m]=value.split(":").map(Number);return h*60+m; }
 function minutesToTime(minutes) { return `${String(Math.floor(minutes/60)%24).padStart(2,"0")}:${String(minutes%60).padStart(2,"0")}`; }
 function formatClock(minutes) { const h=Math.floor(minutes/60)%24,m=minutes%60;if(settings.lunch24Hour)return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return `${h%12||12}:${String(m).padStart(2,"0")} ${h<12?"AM":"PM"}`; }
+function openLunchTimeEntry() {
+  const now=new Date();
+  const saved=timeToMinutes(settings.lunchStartTime);
+  const base=saved!==null&&settings.lunchStartDate===today()?saved:now.getHours()*60+now.getMinutes();
+  const hour24=Math.floor(base/60)%24, minute=base%60;
+  const shownHour=settings.lunch24Hour?hour24:(hour24%12||12);
+  const period=hour24>=12?"PM":"AM";
+  const periodField=settings.lunch24Hour?"":`<label class="manual-time-period"><span class="setting-label">Period</span><select id="lunch-period"><option ${period==="AM"?"selected":""}>AM</option><option ${period==="PM"?"selected":""}>PM</option></select></label>`;
+  showDialog("Enter lunch start time",`<p>Logging for ${escapeHtml(fullDate(today()))}</p><div class="manual-time-row"><label><span class="setting-label">${settings.lunch24Hour?"Hour (0–23)":"Hour (1–12)"}</span><input class="field" id="lunch-hour" type="number" inputmode="numeric" min="${settings.lunch24Hour?0:1}" max="${settings.lunch24Hour?23:12}" value="${shownHour}"></label><label><span class="setting-label">Minute</span><input class="field" id="lunch-minute" type="number" inputmode="numeric" min="0" max="59" value="${String(minute).padStart(2,"0")}"></label>${periodField}</div>`,"Use time",()=>{
+    let hour=Number(document.querySelector("#lunch-hour").value), enteredMinute=Number(document.querySelector("#lunch-minute").value);
+    const validHour=settings.lunch24Hour?Number.isInteger(hour)&&hour>=0&&hour<=23:Number.isInteger(hour)&&hour>=1&&hour<=12;
+    if(!validHour||!Number.isInteger(enteredMinute)||enteredMinute<0||enteredMinute>59){toast(settings.lunch24Hour?"Enter an hour from 0 to 23 and minutes from 0 to 59":"Enter an hour from 1 to 12 and minutes from 0 to 59");return false;}
+    if(!settings.lunch24Hour)hour=hour%12+(document.querySelector("#lunch-period").value==="PM"?12:0);
+    settings.lunchStartTime=minutesToTime(hour*60+enteredMinute);settings.lunchStartDate=today();saveSettings();render();
+  });
+}
 function openLunchSettings() {
   showDialog("Lunch settings",`<label class="setting-label" for="lunch-duration">Lunch duration in minutes</label><input class="field" id="lunch-duration" type="number" inputmode="numeric" min="1" max="240" value="${settings.lunchDuration}"><div class="spacer-18"></div><div class="inline-toggle"><div><div class="toggle-title">Use 24-hour clock</div><div class="toggle-detail">Off: 1:30 PM. On: 13:30.</div></div><label class="switch"><input id="lunch-24-hour" type="checkbox" ${settings.lunch24Hour?"checked":""} aria-label="Use 24-hour clock"><span></span></label></div>`,"Save",()=>{
     const duration=Number(document.querySelector("#lunch-duration").value);
@@ -254,9 +271,8 @@ function bindActions() {
   document.querySelector('[data-action="called-out"]')?.addEventListener("click",()=>showConfirm("Mark called out?",`Save a call-out for ${shortDate(selectedTardyDate)}?`,()=>saveAttendance(CALLED_OUT,0)));
   document.querySelector('[data-action="tardy"]')?.addEventListener("click",()=>{const mins=readLateMinutes();if(mins!==null)saveAttendance(TARDY,mins);});
   document.querySelector('[data-action="save-hours"]')?.addEventListener("click",saveHours);
-  document.querySelector('[data-action="lunch-now"]')?.addEventListener("click",()=>{const now=new Date();settings.lunchStartTime=minutesToTime(now.getHours()*60+now.getMinutes());saveSettings();render();});
-  document.querySelector('[data-action="pick-lunch-time"]')?.addEventListener("click",()=>{const picker=document.querySelector("#lunch-time");picker.showPicker?picker.showPicker():picker.click();});
-  document.querySelector("#lunch-time")?.addEventListener("change",event=>{settings.lunchStartTime=event.target.value;saveSettings();render();});
+  document.querySelector('[data-action="lunch-now"]')?.addEventListener("click",()=>{const now=new Date();settings.lunchStartTime=minutesToTime(now.getHours()*60+now.getMinutes());settings.lunchStartDate=today();saveSettings();render();});
+  document.querySelector('[data-action="pick-lunch-time"]')?.addEventListener("click",openLunchTimeEntry);
   document.querySelector('[data-action="lunch-settings"]')?.addEventListener("click",openLunchSettings);
   document.querySelectorAll("[data-history]").forEach(el=>el.addEventListener("click",()=>{historyType=el.dataset.history;view="history";render();}));
   document.querySelectorAll("[data-history-tab]").forEach(el=>el.addEventListener("click",()=>{historyType=el.dataset.historyTab;render();}));
