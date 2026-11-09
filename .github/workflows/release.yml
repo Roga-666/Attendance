@@ -59,15 +59,43 @@ jobs:
 
           sha256sum "$release_apk" > "$release_apk.sha256"
 
+      - name: Refuse signer changes and Android versionCode regressions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          new_apk="Attendance-$GITHUB_REF_NAME.apk"
+          package_line="$("$build_tools/aapt" dump badging "$new_apk" | grep '^package: ' | head -1)"
+          new_code="$(printf '%s\n' "$package_line" | grep -oP "versionCode='\\K[0-9]+")"
+          new_package="$(printf '%s\n' "$package_line" | grep -oP "name='\\K[^']+")"
+          test "$new_package" = "com.rolando.attendance"
+          previous="$(gh release list --limit 100 --json tagName --jq '[.[] | select(.tagName | startswith("v")) | select(.tagName != env.GITHUB_REF_NAME)] | first | .tagName // empty')"
+          if [ -n "$previous" ]; then
+            mkdir -p "$RUNNER_TEMP/prior-attendance"
+            gh release download "$previous" --pattern 'Attendance-*.apk' --dir "$RUNNER_TEMP/prior-attendance"
+            old_apk="$(find "$RUNNER_TEMP/prior-attendance" -name '*.apk' -type f | head -1)"
+            test -s "$old_apk"
+            old_line="$("$build_tools/aapt" dump badging "$old_apk" | grep '^package: ' | head -1)"
+            old_code="$(printf '%s\n' "$old_line" | grep -oP "versionCode='\\K[0-9]+")"
+            old_package="$(printf '%s\n' "$old_line" | grep -oP "name='\\K[^']+")"
+            old_cert="$("$build_tools/apksigner" verify --print-certs "$old_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF;exit}')"
+            new_cert="$("$build_tools/apksigner" verify --print-certs "$new_apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF;exit}')"
+            test -n "$new_cert" && test "$new_cert" = "$old_cert" || { echo "::error::App signing certificate changed"; exit 1; }
+            test "$new_package" = "$old_package" || { echo "::error::App package ID changed"; exit 1; }
+            if [ "$new_code" -le "$old_code" ]; then echo "::error::versionCode must increase above $old_code"; exit 1; fi
+          fi
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           release_apk="Attendance-${GITHUB_REF_NAME}.apk"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$release_apk" "$release_apk.sha256" --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" "$release_apk" "$release_apk.sha256" \
-              --title "Attendance ${GITHUB_REF_NAME#v}" \
-              --generate-notes
+            echo "::error::Published release tag already exists. Refusing to replace signed APK bytes."
+            exit 1
           fi
+          gh release create "$GITHUB_REF_NAME" "$release_apk" "$release_apk.sha256" \
+            --title "Attendance ${GITHUB_REF_NAME#v}" \
+            --generate-notes
