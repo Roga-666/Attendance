@@ -13,6 +13,8 @@ The repository also contains a separate mobile-first web edition under [`web/`](
 - Decimal or H:MM clock-form entry for worked hours
 - Current week, last week, current pay period, and last pay period hour totals
 - Configurable pay-period dates and separate tardy/call-out counts
+- Four-digit lunch entry that advances automatically from hour to minutes
+- Optional clock-back-in lunch notification with a chime
 - Dedicated Tardy and Call-Out history tabs opened from the summary counters
 - Explicit Edit and Delete controls for correcting tardies and call-outs
 - Native **PDF export and Android share sheet** for the active mode and filter
@@ -29,7 +31,7 @@ The `web/` folder contains an installable progressive web app with the same atte
 
 ## Install the ready-made APK
 
-1. Copy `Attendance-v1.4.2.apk` to your Android phone.
+1. Copy the latest `Attendance-v*.apk` to your Android phone.
 2. Open it and allow installation from the app you used to open the file when Android asks.
 3. Install **Attendance**.
 

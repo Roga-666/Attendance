@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "1.5.1-web.1";
+const VERSION = "1.6.0-web.1";
 const STORAGE_KEY = "attendance-web-data-v2";
 const SETTINGS_KEY = "attendance-web-settings-v1";
 const TARDY = "Tardy";
@@ -174,17 +174,23 @@ function openLunchTimeEntry() {
   const now=new Date();
   const saved=timeToMinutes(settings.lunchStartTime);
   const base=saved!==null&&settings.lunchStartDate===today()?saved:now.getHours()*60+now.getMinutes();
-  const hour24=Math.floor(base/60)%24, minute=base%60;
-  const shownHour=settings.lunch24Hour?hour24:(hour24%12||12);
+  const hour24=Math.floor(base/60)%24;
   const period=hour24>=12?"PM":"AM";
   const periodField=settings.lunch24Hour?"":`<label class="manual-time-period"><span class="setting-label">Period</span><select id="lunch-period"><option ${period==="AM"?"selected":""}>AM</option><option ${period==="PM"?"selected":""}>PM</option></select></label>`;
-  showDialog("Enter lunch start time",`<p>Logging for ${escapeHtml(fullDate(today()))}</p><div class="manual-time-row"><label><span class="setting-label">${settings.lunch24Hour?"Hour (0–23)":"Hour (1–12)"}</span><input class="field" id="lunch-hour" type="number" inputmode="numeric" min="${settings.lunch24Hour?0:1}" max="${settings.lunch24Hour?23:12}" value="${shownHour}"></label><label><span class="setting-label">Minute</span><input class="field" id="lunch-minute" type="number" inputmode="numeric" min="0" max="59" value="${String(minute).padStart(2,"0")}"></label>${periodField}</div>`,"Use time",()=>{
+  const dialog=showDialog("Enter lunch start time",`<p>Logging for ${escapeHtml(fullDate(today()))}</p><div class="manual-time-row"><label><span class="setting-label">${settings.lunch24Hour?"Hour (0–23)":"Hour (1–12)"}</span><input class="field" id="lunch-hour" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" placeholder="HH"></label><label><span class="setting-label">Minute</span><input class="field" id="lunch-minute" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" autocomplete="off" placeholder="MM"></label>${periodField}</div>`,"Use time",()=>{
     let hour=Number(document.querySelector("#lunch-hour").value), enteredMinute=Number(document.querySelector("#lunch-minute").value);
-    const validHour=settings.lunch24Hour?Number.isInteger(hour)&&hour>=0&&hour<=23:Number.isInteger(hour)&&hour>=1&&hour<=12;
-    if(!validHour||!Number.isInteger(enteredMinute)||enteredMinute<0||enteredMinute>59){toast(settings.lunch24Hour?"Enter an hour from 0 to 23 and minutes from 0 to 59":"Enter an hour from 1 to 12 and minutes from 0 to 59");return false;}
+    const hourText=document.querySelector("#lunch-hour").value, minuteText=document.querySelector("#lunch-minute").value;
+    const validHour=hourText.length===2&&(settings.lunch24Hour?Number.isInteger(hour)&&hour>=0&&hour<=23:Number.isInteger(hour)&&hour>=1&&hour<=12);
+    if(!validHour||minuteText.length!==2||!Number.isInteger(enteredMinute)||enteredMinute<0||enteredMinute>59){toast(settings.lunch24Hour?"Type four digits: hour 00–23, then minutes 00–59":"Type four digits: hour 01–12, then minutes 00–59");return false;}
     if(!settings.lunch24Hour)hour=hour%12+(document.querySelector("#lunch-period").value==="PM"?12:0);
     settings.lunchStartTime=minutesToTime(hour*60+enteredMinute);settings.lunchStartDate=today();saveSettings();render();
   });
+  const hourField=dialog.querySelector("#lunch-hour"), minuteField=dialog.querySelector("#lunch-minute");
+  const digitsOnly=event=>{event.target.value=event.target.value.replace(/\D/g,"").slice(0,2);};
+  hourField.addEventListener("input",event=>{digitsOnly(event);if(hourField.value.length===2)minuteField.focus();});
+  minuteField.addEventListener("input",digitsOnly);
+  minuteField.addEventListener("keydown",event=>{if(event.key==="Backspace"&&!minuteField.value){event.preventDefault();hourField.focus();hourField.setSelectionRange(hourField.value.length,hourField.value.length);}});
+  hourField.focus();
 }
 function openLunchSettings() {
   showDialog("Lunch settings",`<label class="setting-label" for="lunch-duration">Lunch duration in minutes</label><input class="field" id="lunch-duration" type="number" inputmode="numeric" min="1" max="240" value="${settings.lunchDuration}"><div class="spacer-18"></div><div class="inline-toggle"><div><div class="toggle-title">Use 24-hour clock</div><div class="toggle-detail">Off: 1:30 PM. On: 13:30.</div></div><label class="switch"><input id="lunch-24-hour" type="checkbox" ${settings.lunch24Hour?"checked":""} aria-label="Use 24-hour clock"><span></span></label></div>`,"Save",()=>{
@@ -340,6 +346,7 @@ function tardyFilterLabel(){if(tardyFilter==="days30")return "Last 30 days";if(t
 
 function showDialog(title,body,confirmLabel,onConfirm) {
   const dialog=document.createElement("dialog");dialog.innerHTML=`<form method="dialog" class="dialog-body"><h2>${escapeHtml(title)}</h2>${body}<div class="dialog-actions"><button class="outline" value="cancel">Cancel</button><button class="primary" id="dialog-confirm" value="confirm">${escapeHtml(confirmLabel)}</button></div></form>`;document.body.append(dialog);dialog.addEventListener("close",()=>dialog.remove());dialog.querySelector("#dialog-confirm").addEventListener("click",event=>{event.preventDefault();const result=onConfirm();if(result!==false)dialog.close();});dialog.showModal();
+  return dialog;
 }
 function showConfirm(title,message,onConfirm){showDialog(title,`<p>${escapeHtml(message)}</p>`,"Confirm",onConfirm);}
 function toast(message){const el=document.querySelector("#toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),2600);}

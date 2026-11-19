@@ -2,8 +2,12 @@ name: Build signed APK release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-java@v5
         with:
@@ -38,7 +44,12 @@ jobs:
         run: |
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           unsigned_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
-          release_apk="Attendance-${GITHUB_REF_NAME}.apk"
+          version_name=$("$build_tools/aapt" dump badging "$unsigned_apk" | sed -n "s/package:.*versionName='\([^']*\)'.*/\1/p")
+          release_tag="v${version_name}"
+          release_apk="Attendance-${release_tag}.apk"
+
+          printf 'RELEASE_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"
+          printf 'RELEASE_APK=%s\n' "$release_apk" >> "$GITHUB_ENV"
 
           "$build_tools/zipalign" -p -f 4 "$unsigned_apk" "$RUNNER_TEMP/aligned.apk"
           "$build_tools/apksigner" sign \
@@ -49,9 +60,8 @@ jobs:
             --out "$release_apk" \
             "$RUNNER_TEMP/aligned.apk"
 
-          version_name=$("$build_tools/aapt" dump badging "$release_apk" | sed -n "s/package:.*versionName='\([^']*\)'.*/\1/p")
-          tag_version="${GITHUB_REF_NAME#v}"
-          test "$version_name" = "$tag_version"
+          signed_version=$("$build_tools/aapt" dump badging "$release_apk" | sed -n "s/package:.*versionName='\([^']*\)'.*/\1/p")
+          test "$signed_version" = "$version_name"
 
           certificate=$("$build_tools/apksigner" verify --verbose --print-certs "$release_apk")
           printf '%s\n' "$certificate"
@@ -63,11 +73,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_apk="Attendance-${GITHUB_REF_NAME}.apk"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$release_apk" "$release_apk.sha256" --clobber
+          if git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
           else
-            gh release create "$GITHUB_REF_NAME" "$release_apk" "$release_apk.sha256" \
-              --title "Attendance ${GITHUB_REF_NAME#v}" \
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$RELEASE_APK" "$RELEASE_APK.sha256" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$RELEASE_APK" "$RELEASE_APK.sha256" \
+              --title "Attendance ${RELEASE_TAG#v}" \
               --generate-notes
           fi

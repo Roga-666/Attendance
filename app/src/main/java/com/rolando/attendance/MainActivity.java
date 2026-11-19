@@ -1,23 +1,31 @@
 package com.rolando.attendance;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.app.PendingIntent;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
 import android.provider.Settings;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.CompoundButton;
@@ -38,6 +46,8 @@ import android.widget.Toast;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.YearMonth;
 import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
@@ -59,6 +69,7 @@ public final class MainActivity extends Activity {
     private static final int IMPORT_BACKUP = 402;
     private static final int DRIVE_CREATE = 403;
     private static final int DRIVE_OPEN = 404;
+    private static final int NOTIFICATION_PERMISSION = 405;
 
     private enum Mode { TARDY, HOURS, LUNCH, SETTINGS }
     private enum Filter {
@@ -392,7 +403,7 @@ public final class MainActivity extends Activity {
         Button now = button("Use current time", TEAL, Color.WHITE);
         now.setOnClickListener(v -> {
             LocalTime time = LocalTime.now();
-            prefs.edit().putInt("lunch_start_minutes", time.getHour() * 60 + time.getMinute()).putString("lunch_start_date", LocalDate.now().toString()).apply();
+            saveLunchStart(LocalDate.now(), time.getHour() * 60 + time.getMinute());
             showLunch();
         });
         Button manual = outlineButton("Enter manually");
@@ -428,7 +439,6 @@ public final class MainActivity extends Activity {
         LocalTime now = LocalTime.now();
         boolean savedToday = LocalDate.now().equals(savedLunchDate());
         int hour = savedMinutes >= 0 && savedToday ? savedMinutes / 60 : now.getHour();
-        int minute = savedMinutes >= 0 && savedToday ? savedMinutes % 60 : now.getMinute();
         boolean use24Hour = prefs.getBoolean("lunch_24_hour", false);
 
         LinearLayout form = new LinearLayout(this);
@@ -438,9 +448,27 @@ public final class MainActivity extends Activity {
         LinearLayout timeRow = horizontal();
         EditText hourField = numberField(use24Hour ? "Hour (0–23)" : "Hour (1–12)", 2);
         EditText minuteField = numberField("Minute", 2);
-        int shownHour = use24Hour ? hour : (hour % 12 == 0 ? 12 : hour % 12);
-        hourField.setText(String.valueOf(shownHour));
-        minuteField.setText(String.format(Locale.US, "%02d", minute));
+        hourField.setText("");
+        minuteField.setText("");
+        hourField.setSelectAllOnFocus(true);
+        minuteField.setSelectAllOnFocus(true);
+        hourField.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (s.length() == 2) minuteField.requestFocus();
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+        minuteField.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == android.view.KeyEvent.KEYCODE_DEL
+                    && event.getAction() == android.view.KeyEvent.ACTION_DOWN
+                    && minuteField.getText().length() == 0) {
+                hourField.requestFocus();
+                hourField.setSelection(hourField.length());
+                return true;
+            }
+            return false;
+        });
         timeRow.addView(hourField, new LinearLayout.LayoutParams(0, dp(56), 1));
         timeRow.addView(gap(dp(8)));
         timeRow.addView(minuteField, new LinearLayout.LayoutParams(0, dp(56), 1));
@@ -474,11 +502,13 @@ public final class MainActivity extends Activity {
             }
             int selectedHour = enteredHour;
             if (!use24Hour) selectedHour = enteredHour % 12 + (finalPeriod.getSelectedItemPosition() == 1 ? 12 : 0);
-            prefs.edit().putInt("lunch_start_minutes", selectedHour * 60 + enteredMinute).putString("lunch_start_date", LocalDate.now().toString()).apply();
+            saveLunchStart(LocalDate.now(), selectedHour * 60 + enteredMinute);
             dialog.dismiss();
             showLunch();
         }));
         dialog.show();
+        hourField.requestFocus();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
     }
 
     private LocalDate savedLunchDate() {
@@ -501,6 +531,14 @@ public final class MainActivity extends Activity {
         clockFormat.setTextColor(INK);
         clockFormat.setChecked(prefs.getBoolean("lunch_24_hour", false));
         form.addView(clockFormat, lpMatchWrap(0));
+        Switch reminder = new Switch(this);
+        reminder.setText("Notify me when lunch ends");
+        reminder.setTextColor(INK);
+        reminder.setChecked(prefs.getBoolean("lunch_reminder", false));
+        form.addView(reminder, lpMatchWrap(dp(10)));
+        TextView reminderDetail = label("Play a chime and show a pop-up at your clock-back-in time.", 12, MUTED, false);
+        reminderDetail.setPadding(0, 0, 0, dp(4));
+        form.addView(reminderDetail, lpMatchWrap(0));
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Lunch settings")
@@ -513,11 +551,80 @@ public final class MainActivity extends Activity {
             try { minutes = Integer.parseInt(duration.getText().toString()); }
             catch (NumberFormatException e) { toast("Enter a lunch duration"); return; }
             if (minutes < 1 || minutes > 240) { toast("Lunch duration must be between 1 and 240 minutes"); return; }
-            prefs.edit().putInt("lunch_duration", minutes).putBoolean("lunch_24_hour", clockFormat.isChecked()).apply();
+            boolean reminderEnabled = reminder.isChecked();
+            prefs.edit()
+                    .putInt("lunch_duration", minutes)
+                    .putBoolean("lunch_24_hour", clockFormat.isChecked())
+                    .putBoolean("lunch_reminder", reminderEnabled)
+                    .apply();
+            if (reminderEnabled) {
+                LunchReminderReceiver.ensureChannel(this);
+                requestLunchNotificationPermissionIfNeeded();
+                rescheduleSavedLunchReminder();
+            } else {
+                cancelLunchReminder();
+            }
             dialog.dismiss();
             showLunch();
         }));
         dialog.show();
+    }
+
+    private void saveLunchStart(LocalDate date, int startMinutes) {
+        prefs.edit()
+                .putInt("lunch_start_minutes", startMinutes)
+                .putString("lunch_start_date", date.toString())
+                .apply();
+        scheduleLunchReminder(date, startMinutes);
+    }
+
+    private void rescheduleSavedLunchReminder() {
+        int startMinutes = prefs.getInt("lunch_start_minutes", -1);
+        LocalDate date = savedLunchDate();
+        if (startMinutes >= 0 && date != null) scheduleLunchReminder(date, startMinutes);
+    }
+
+    private void scheduleLunchReminder(LocalDate date, int startMinutes) {
+        cancelLunchReminder();
+        if (!prefs.getBoolean("lunch_reminder", false)) return;
+        int duration = prefs.getInt("lunch_duration", 30);
+        ZonedDateTime trigger = date.atStartOfDay(ZoneId.systemDefault()).plusMinutes(startMinutes + duration);
+        long triggerAt = trigger.toInstant().toEpochMilli();
+        if (triggerAt <= System.currentTimeMillis()) return;
+        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        try {
+            alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, lunchReminderIntent());
+        } catch (SecurityException denied) {
+            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, lunchReminderIntent());
+        }
+    }
+
+    private void cancelLunchReminder() {
+        AlarmManager alarms = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        alarms.cancel(lunchReminderIntent());
+    }
+
+    private PendingIntent lunchReminderIntent() {
+        Intent intent = new Intent(this, LunchReminderReceiver.class);
+        return PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private void requestLunchNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION);
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != NOTIFICATION_PERMISSION) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            rescheduleSavedLunchReminder();
+        } else {
+            prefs.edit().putBoolean("lunch_reminder", false).apply();
+            cancelLunchReminder();
+            toast("Lunch reminders are off because notifications were not allowed");
+        }
     }
 
     private String formatLunchTime(int minutes) {
@@ -697,7 +804,7 @@ public final class MainActivity extends Activity {
 
         body.addView(sectionTitle("ABOUT YOUR DATA"));
         body.addView(infoCard("Your database stays private inside the app. Data leaves the device only when you export it or enable a Drive backup file."));
-        body.addView(label("Attendance 1.5.1", 12, MUTED, false), lpMatchWrap(dp(16)));
+        body.addView(label("Attendance 1.6.0", 12, MUTED, false), lpMatchWrap(dp(16)));
     }
 
     private void showAttendanceHistory(String type) {
